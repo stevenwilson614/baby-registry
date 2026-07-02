@@ -17,8 +17,8 @@ the payment went through so the progress bars update.
    through?"). Answering "No" removes the pending contribution.
 
 **Parents** — click *For parents* in the footer and enter the PIN.
-- **Add item**: paste any product link (Amazon, Target, ...) — the store is
-  auto-detected; add title, price you paid, and optionally an image URL and note.
+- **Add item**: paste any product link (Amazon, Target, ...) — title, price, photo, and store are
+  auto-filled from the link (via a Supabase Edge Function); tweak anything before saving.
 - **Settings**: registry title, welcome message, Venmo username, Zelle
   email/phone + recipient name, and the PIN itself.
 - Per item: edit, view gifts (confirm or remove any contribution), mark

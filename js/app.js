@@ -4,6 +4,7 @@
 const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
 const PENDING_KEY = 'br_pending_contribution';
 const ADMIN_KEY = 'br_admin';
+const DEFAULT_VENMO_USERNAME = 'steven-wilson-614';
 
 const state = {
   settings: null,
@@ -39,6 +40,16 @@ const ICONS = {
   star: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.9-5.2-2.8-5.2 2.8 1-5.9L3.5 9.7l5.9-.9z"/></svg>',
 };
 const PLACEHOLDERS = [ICONS.stroller, ICONS.moon, ICONS.bottle, ICONS.star];
+
+function venmoUsername(settings) {
+  const user = (settings?.venmo_username || '').trim().replace(/^@/, '');
+  return user || DEFAULT_VENMO_USERNAME;
+}
+
+function buildVenmoUrl(user, amount, note) {
+  const clean = String(user).trim().replace(/^@/, '');
+  return `https://venmo.com/${encodeURIComponent(clean)}?txn=pay&amount=${Number(amount).toFixed(2)}&note=${encodeURIComponent(note)}`;
+}
 
 function toast(msg) {
   document.querySelectorAll('.toast').forEach((t) => t.remove());
@@ -125,10 +136,11 @@ function cardHTML(item, idx) {
 
   const adminRow = state.admin
     ? `<div class="admin-actions">
-         <button class="btn btn-small btn-ghost" data-edit="${item.id}">${ICONS.pencil} Edit</button>
+         <button class="btn btn-small btn-ghost" data-edit="${item.id}">${ICONS.pencil} Edit title &amp; price</button>
+         <button class="btn btn-small btn-ghost" data-edit-full="${item.id}">Edit all details</button>
          <button class="btn btn-small btn-ghost" data-contribs="${item.id}">${ICONS.users} Gifts (${contribsFor(item.id).length})</button>
          <button class="btn btn-small ${item.received ? 'btn-ghost' : 'btn-sage'}" data-received="${item.id}">${item.received ? 'Un-mark received' : 'Mark received'}</button>
-         <button class="btn btn-small btn-ghost" data-delete="${item.id}">${ICONS.trash}</button>
+         <button class="btn btn-small btn-danger" data-delete="${item.id}">${ICONS.trash} Delete</button>
        </div>`
     : '';
 
@@ -164,7 +176,7 @@ function closeModal() {
 function openContribute(item, payFull) {
   const remaining = remainingFor(item);
   const s = state.settings;
-  const hasVenmo = !!s.venmo_username.trim();
+  const hasVenmo = !!venmoUsername(s);
   const hasZelle = !!s.zelle_handle.trim();
   if (!hasVenmo && !hasZelle) {
     openModal(`<h2>Almost ready</h2><p class="sub">The parents haven’t added their Venmo or Zelle details yet. Check back soon!</p>`);
@@ -200,10 +212,44 @@ function openContribute(item, payFull) {
 
   let method = hasVenmo ? 'venmo' : 'zelle';
   const paint = () => document.querySelectorAll('.method-btn').forEach((b) => b.classList.toggle('on', b.dataset.method === method));
+
+  const readForm = () => ({
+    name: $('#cName').value.trim(),
+    amount: Math.round(parseFloat($('#cAmount').value || '0') * 100) / 100,
+    message: $('#cMessage').value.trim(),
+  });
+
+  const validateForm = () => {
+    const { name, amount, message } = readForm();
+    const err = $('#cError');
+    if (!name) { err.textContent = 'Please add your name.'; return null; }
+    if (!(amount >= 1)) { err.textContent = 'Please enter an amount of at least $1.'; return null; }
+    if (amount > remaining + 0.001) { err.textContent = `Only ${money(remaining)} is still needed for this one.`; return null; }
+    err.textContent = '';
+    return { name, amount, message };
+  };
+
+  const submitPayment = async (paymentMethod) => {
+    const form = validateForm();
+    if (!form) return;
+    $('#cGo').disabled = true;
+    try {
+      await startPayment(item, { ...form, method: paymentMethod });
+    } catch (e) {
+      $('#cError').textContent = 'Something went wrong — please try again.';
+      $('#cGo').disabled = false;
+      console.error(e);
+    }
+  };
+
   paint();
 
   document.querySelectorAll('.method-btn:not([disabled])').forEach((b) =>
-    b.addEventListener('click', () => { method = b.dataset.method; paint(); }));
+    b.addEventListener('click', () => {
+      method = b.dataset.method;
+      paint();
+      if (method === 'venmo') submitPayment('venmo');
+    }));
   document.querySelectorAll('.amt-chip').forEach((b) =>
     b.addEventListener('click', () => {
       $('#cAmount').value = b.dataset.amt;
@@ -211,23 +257,7 @@ function openContribute(item, payFull) {
     }));
   $('#cAmount').addEventListener('input', () => document.querySelectorAll('.amt-chip').forEach((x) => x.classList.remove('on')));
 
-  $('#cGo').addEventListener('click', async () => {
-    const name = $('#cName').value.trim();
-    const amount = Math.round(parseFloat($('#cAmount').value || '0') * 100) / 100;
-    const err = $('#cError');
-    if (!name) { err.textContent = 'Please add your name.'; return; }
-    if (!(amount >= 1)) { err.textContent = 'Please enter an amount of at least $1.'; return; }
-    if (amount > remaining + 0.001) { err.textContent = `Only ${money(remaining)} is still needed for this one.`; return; }
-    err.textContent = '';
-    $('#cGo').disabled = true;
-    try {
-      await startPayment(item, { name, amount, method, message: $('#cMessage').value.trim() });
-    } catch (e) {
-      err.textContent = 'Something went wrong — please try again.';
-      $('#cGo').disabled = false;
-      console.error(e);
-    }
-  });
+  $('#cGo').addEventListener('click', () => submitPayment(method));
 }
 
 async function startPayment(item, { name, amount, method, message }) {
@@ -241,9 +271,9 @@ async function startPayment(item, { name, amount, method, message }) {
   const s = state.settings;
   let payArea;
   if (method === 'venmo') {
-    const user = s.venmo_username.trim().replace(/^@/, '');
+    const user = venmoUsername(s);
     const note = `Baby registry - ${item.title}`;
-    const url = `https://venmo.com/${encodeURIComponent(user)}?txn=pay&amount=${amount.toFixed(2)}&note=${encodeURIComponent(note)}`;
+    const url = buildVenmoUrl(user, amount, note);
     window.open(url, '_blank', 'noopener');
     payArea = `
       <div class="pay-panel">
@@ -251,7 +281,7 @@ async function startPayment(item, { name, amount, method, message }) {
         <div class="rowline"><span>Amount</span><b>${money(amount)}</b></div>
       </div>
       <p class="sub">We opened Venmo in a new tab. If it didn’t open,
-        <a href="https://venmo.com/${encodeURIComponent(user)}?txn=pay&amount=${amount.toFixed(2)}" target="_blank" rel="noopener">tap here to pay @${esc(user)}</a>.</p>`;
+        <a href="${esc(url)}" target="_blank" rel="noopener">tap here to pay @${esc(user)}</a>.</p>`;
   } else {
     payArea = `
       <div class="pay-panel">
@@ -335,6 +365,36 @@ function detectRetailer(url) {
   } catch { return ''; }
 }
 
+function normalizeProductUrl(raw) {
+  let url = String(raw || '').trim();
+  if (!url) return '';
+  if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+  return url;
+}
+
+async function fetchProductFromUrl(rawUrl) {
+  const url = normalizeProductUrl(rawUrl);
+  if (!url) throw new Error('Enter a product link first');
+
+  const { data, error } = await sb.functions.invoke('fetch-product', { body: { url } });
+  if (!error && data && !data.error) return data;
+
+  const res = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/fetch-product`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: CONFIG.SUPABASE_KEY,
+      Authorization: `Bearer ${CONFIG.SUPABASE_KEY}`,
+    },
+    body: JSON.stringify({ url }),
+  });
+  const fallback = await res.json();
+  if (!res.ok || fallback.error) {
+    throw new Error(fallback.error || error?.message || 'Could not fetch product');
+  }
+  return fallback;
+}
+
 function promptAdmin() {
   if (state.admin) { exitAdmin(); return; }
   openModal(`
@@ -363,48 +423,303 @@ function exitAdmin() {
 function openItemForm(item) {
   const isEdit = !!item;
   item = item || { title: '', product_url: '', image_url: '', retailer: '', price: '', note: '' };
+
+  if (isEdit) {
+    openItemFormFull(item, true);
+    return;
+  }
+
+  openModal(`
+    <h2>Add an item</h2>
+    <p class="sub">Paste a product link — we'll pull the title, price, and photo automatically.</p>
+    <div class="field">
+      <label>Product link</label>
+      <input id="fUrl" placeholder="www.amazon.com/... or www.target.com/..." autofocus>
+      <div class="hint" id="fUrlHint">Paste or type a link, then wait a moment.</div>
+    </div>
+    <div class="lookup-loading" id="fLoading" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="spin"><path d="M12 3a9 9 0 1 0 9 9"/></svg>
+      <span>Looking up product…</span>
+    </div>
+    <div id="fFound" hidden>
+      <div class="product-found" id="fFoundCard"></div>
+    </div>
+    <div id="fManual" hidden>
+      <p class="manual-label" id="fManualLabel">Fill in what's missing:</p>
+      <div class="field" id="fTitleWrap" hidden><label>Title</label>
+        <input id="fTitle" maxlength="120" placeholder="Product name"></div>
+      <div class="field" id="fPriceWrap" hidden><label>Price you paid ($)</label>
+        <input id="fPrice" type="number" min="1" step="0.01" placeholder="0.00"></div>
+      <div class="field" id="fImageWrap" hidden><label>Photo URL</label>
+        <input id="fImage" placeholder="https://... image link"></div>
+      <div class="field" id="fRetailerWrap" hidden><label>Store</label>
+        <input id="fRetailer" maxlength="40" placeholder="Amazon"></div>
+    </div>
+    <div class="field" id="fNoteWrap" hidden>
+      <label>Note <span class="label-soft">(optional)</span></label>
+      <input id="fNote" maxlength="140" placeholder="The one in oat, not sand">
+    </div>
+    <p class="form-error" id="fError"></p>
+    <button class="btn btn-block" id="fSave" disabled>Add to registry</button>`);
+
+  let fetchSeq = 0;
+  let urlTimer;
+  let lookupDone = false;
+  const fetched = { title: '', price: null, image_url: '', retailer: '' };
+
+  const setHint = (msg, cls = '') => {
+    $('#fUrlHint').textContent = msg;
+    $('#fUrlHint').className = 'hint' + (cls ? ` ${cls}` : '');
+  };
+
+  const show = (id, on) => { $(id).hidden = !on; };
+
+  const syncSave = () => {
+    const title = fetched.title || $('#fTitle')?.value.trim() || '';
+    const price = fetched.price ?? parseFloat($('#fPrice')?.value || '');
+    $('#fSave').disabled = !(title && price >= 1);
+  };
+
+  const renderFound = () => {
+    const title = fetched.title || $('#fTitle')?.value.trim();
+    const price = fetched.price ?? parseFloat($('#fPrice')?.value || '');
+    const image = fetched.image_url || $('#fImage')?.value.trim();
+    const store = fetched.retailer || $('#fRetailer')?.value.trim();
+
+    if (!title && price == null && !image) {
+      show('#fFound', false);
+      return;
+    }
+
+    show('#fFound', true);
+    $('#fFoundCard').innerHTML = `
+      ${image ? `<img src="${esc(image)}" alt="${esc(title || 'Product')}" onerror="this.style.display='none'">` : `<div class="product-found-ph">${ICONS.gift}</div>`}
+      <div class="product-found-body">
+        <strong>${esc(title || 'Untitled')}</strong>
+        ${price >= 1 ? `<span class="product-found-price">${money(price)}</span>` : '<span class="product-found-missing">Price needed</span>'}
+        ${store ? `<span class="product-found-store">${esc(store)}</span>` : ''}
+      </div>`;
+  };
+
+  const showManualFields = (needs) => {
+    show('#fManual', true);
+    show('#fTitleWrap', needs.title);
+    show('#fPriceWrap', needs.price);
+    show('#fImageWrap', needs.image);
+    show('#fRetailerWrap', needs.retailer);
+    if (needs.title) $('#fTitle').value = fetched.title || '';
+    if (needs.price && fetched.price != null) $('#fPrice').value = fetched.price;
+    if (needs.image) $('#fImage').value = fetched.image_url || '';
+    if (needs.retailer) $('#fRetailer').value = fetched.retailer || '';
+  };
+
+  const applyFetch = (data, url) => {
+    fetched.title = data.title || '';
+    fetched.price = data.price != null ? data.price : null;
+    fetched.image_url = data.image_url || '';
+    fetched.retailer = data.retailer || detectRetailer(url);
+
+    const needs = {
+      title: !fetched.title,
+      price: fetched.price == null,
+      image: !fetched.image_url,
+      retailer: !fetched.retailer,
+    };
+    const anyMissing = needs.title || needs.price || needs.image;
+
+    renderFound();
+    if (anyMissing) {
+      $('#fManualLabel').textContent = anyMissing === (needs.title && needs.price && needs.image)
+        ? "Couldn't read this link — fill in the details:"
+        : 'Fill in what we couldn\'t find:';
+      showManualFields(needs);
+    } else {
+      show('#fManual', false);
+      setHint('Looks good — add a note or save when ready.');
+    }
+    show('#fNoteWrap', true);
+    lookupDone = true;
+    syncSave();
+  };
+
+  const handleUrlFetch = async (rawUrl) => {
+    const url = normalizeProductUrl(rawUrl);
+    if (!url || url.length < 12) return;
+    if ($('#fUrl').value.trim() !== url) $('#fUrl').value = url;
+
+    const seq = ++fetchSeq;
+    lookupDone = false;
+    $('#fError').textContent = '';
+    show('#fLoading', true);
+    show('#fFound', false);
+    show('#fManual', false);
+    show('#fNoteWrap', false);
+    $('#fSave').disabled = true;
+    setHint('Looking up product…', 'hint-loading');
+
+    try {
+      const data = await fetchProductFromUrl(url);
+      if (seq !== fetchSeq) return;
+      show('#fLoading', false);
+      applyFetch(data, url);
+    } catch (err) {
+      if (seq !== fetchSeq) return;
+      show('#fLoading', false);
+      fetched.title = '';
+      fetched.price = null;
+      fetched.image_url = '';
+      fetched.retailer = detectRetailer(url);
+      setHint('Could not read that link — enter the details below.');
+      show('#fFound', false);
+      showManualFields({ title: true, price: true, image: true, retailer: true });
+      if (fetched.retailer) $('#fRetailer').value = fetched.retailer;
+      show('#fNoteWrap', true);
+      lookupDone = true;
+      syncSave();
+      console.error('Product lookup failed:', err);
+    }
+  };
+
+  const queueUrlFetch = (raw) => {
+    clearTimeout(urlTimer);
+    const url = normalizeProductUrl(raw);
+    if (!url || url.length < 12) {
+      setHint('Paste or type a product link.');
+      return;
+    }
+    urlTimer = setTimeout(() => handleUrlFetch(raw), 600);
+  };
+
+  $('#fUrl').addEventListener('input', () => queueUrlFetch($('#fUrl').value));
+  $('#fUrl').addEventListener('paste', () => setTimeout(() => handleUrlFetch($('#fUrl').value), 80));
+  ['fTitle', 'fPrice', 'fImage', 'fRetailer'].forEach((id) => {
+    const el = $(`#${id}`);
+    if (el) el.addEventListener('input', () => {
+      if (id === 'fTitle') fetched.title = el.value.trim();
+      if (id === 'fPrice') fetched.price = parseFloat(el.value) || null;
+      if (id === 'fImage') fetched.image_url = el.value.trim();
+      if (id === 'fRetailer') fetched.retailer = el.value.trim();
+      renderFound();
+      syncSave();
+    });
+  });
+
+  $('#fSave').addEventListener('click', async () => {
+    const rec = {
+      title: fetched.title || $('#fTitle').value.trim(),
+      product_url: normalizeProductUrl($('#fUrl').value),
+      image_url: fetched.image_url || $('#fImage').value.trim(),
+      retailer: fetched.retailer || $('#fRetailer').value.trim() || detectRetailer($('#fUrl').value),
+      price: Math.round(parseFloat(String(fetched.price ?? $('#fPrice').value) || '0') * 100) / 100,
+      note: $('#fNote').value.trim(),
+    };
+    if (!rec.title) { $('#fError').textContent = 'Add a title.'; return; }
+    if (!(rec.price >= 1)) { $('#fError').textContent = 'Add the price you paid.'; return; }
+    if (!lookupDone) { $('#fError').textContent = 'Wait for the link lookup to finish.'; return; }
+    $('#fSave').disabled = true;
+    const { error } = await sb.from('registry_items').insert(rec);
+    if (error) { $('#fError').textContent = 'Could not save — try again.'; $('#fSave').disabled = false; return; }
+    closeModal();
+    await refresh();
+    toast('Item added');
+  });
+}
+
+function openItemFormFull(item, isEdit) {
+  item = item || { title: '', product_url: '', image_url: '', retailer: '', price: '', note: '' };
   openModal(`
     <h2>${isEdit ? 'Edit item' : 'Add an item'}</h2>
-    <p class="sub">Paste the product link from Amazon, Target, or anywhere else.</p>
+    <p class="sub">Update any details for this item.</p>
     <div class="field"><label>Product link</label>
-      <input id="fUrl" placeholder="https://www.amazon.com/..." value="${esc(item.product_url)}">
-      <div class="hint">We’ll detect the store automatically.</div>
-    </div>
-    <div class="field"><label>Item name</label><input id="fTitle" maxlength="120" placeholder="Convertible crib" value="${esc(item.title)}"></div>
+      <input id="fUrl" placeholder="https://www.amazon.com/..." value="${esc(item.product_url)}"></div>
+    <div class="product-preview" id="fPreview" hidden></div>
+    <div class="field"><label>Item name</label><input id="fTitle" maxlength="120" value="${esc(item.title)}"></div>
     <div class="field-row">
       <div class="field"><label>Price ($)</label><input id="fPrice" type="number" min="1" step="0.01" value="${item.price}"></div>
-      <div class="field"><label>Store</label><input id="fRetailer" maxlength="40" placeholder="Amazon" value="${esc(item.retailer)}"></div>
+      <div class="field"><label>Store</label><input id="fRetailer" maxlength="40" value="${esc(item.retailer)}"></div>
     </div>
-    <div class="field"><label>Image link <span style="font-weight:400;color:var(--ink-soft)">(optional)</span></label>
-      <input id="fImage" placeholder="Right-click the product photo and copy image address" value="${esc(item.image_url)}"></div>
-    <div class="field"><label>Note <span style="font-weight:400;color:var(--ink-soft)">(optional)</span></label>
-      <input id="fNote" maxlength="140" placeholder="The one in oat, not sand" value="${esc(item.note)}"></div>
+    <div class="field"><label>Image link</label><input id="fImage" value="${esc(item.image_url)}"></div>
+    <div class="field"><label>Note <span class="label-soft">(optional)</span></label>
+      <input id="fNote" maxlength="140" value="${esc(item.note)}"></div>
     <p class="form-error" id="fError"></p>
-    <button class="btn btn-block" id="fSave">${isEdit ? 'Save changes' : 'Add to registry'}</button>`);
+    <button class="btn btn-block" id="fSave">Save changes</button>`);
 
-  $('#fUrl').addEventListener('change', () => {
-    if (!$('#fRetailer').value.trim()) $('#fRetailer').value = detectRetailer($('#fUrl').value.trim());
-  });
+  const updatePreview = (imageUrl, title) => {
+    const el = $('#fPreview');
+    if (!imageUrl) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    el.innerHTML = `<img src="${esc(imageUrl)}" alt="${esc(title || 'Product')}"><span>${esc(title || '')}</span>`;
+  };
+  if (item.image_url) updatePreview(item.image_url, item.title);
+  $('#fImage').addEventListener('input', () => updatePreview($('#fImage').value.trim(), $('#fTitle').value.trim()));
+
   $('#fSave').addEventListener('click', async () => {
     const rec = {
       title: $('#fTitle').value.trim(),
-      product_url: $('#fUrl').value.trim(),
+      product_url: normalizeProductUrl($('#fUrl').value),
       image_url: $('#fImage').value.trim(),
-      retailer: $('#fRetailer').value.trim() || detectRetailer($('#fUrl').value.trim()),
+      retailer: $('#fRetailer').value.trim() || detectRetailer($('#fUrl').value),
       price: Math.round(parseFloat($('#fPrice').value || '0') * 100) / 100,
       note: $('#fNote').value.trim(),
     };
     if (!rec.title) { $('#fError').textContent = 'Give the item a name.'; return; }
     if (!(rec.price >= 1)) { $('#fError').textContent = 'Enter the price you paid.'; return; }
     $('#fSave').disabled = true;
-    const q = isEdit
-      ? sb.from('registry_items').update(rec).eq('id', item.id)
-      : sb.from('registry_items').insert(rec);
-    const { error } = await q;
+    const { error } = await sb.from('registry_items').update(rec).eq('id', item.id);
     if (error) { $('#fError').textContent = 'Could not save — try again.'; $('#fSave').disabled = false; return; }
     closeModal();
     await refresh();
-    toast(isEdit ? 'Saved' : 'Item added');
+    toast('Saved');
+  });
+}
+
+function openQuickEdit(item) {
+  openModal(`
+    <h2>Edit title &amp; price</h2>
+    <p class="sub">Quick update for <b>${esc(item.title)}</b></p>
+    <div class="field"><label>Title</label>
+      <input id="qeTitle" maxlength="120" value="${esc(item.title)}"></div>
+    <div class="field"><label>Price ($)</label>
+      <input id="qePrice" type="number" min="1" step="0.01" value="${item.price}"></div>
+    <p class="form-error" id="qeError"></p>
+    <button class="btn btn-block" id="qeSave">Save changes</button>
+    <button class="btn btn-block btn-ghost" data-edit-full="${item.id}" style="margin-top:8px">Edit all details (link, photo, note)</button>`);
+
+  $('#qeSave').addEventListener('click', async () => {
+    const title = $('#qeTitle').value.trim();
+    const price = Math.round(parseFloat($('#qePrice').value || '0') * 100) / 100;
+    if (!title) { $('#qeError').textContent = 'Give the item a name.'; return; }
+    if (!(price >= 1)) { $('#qeError').textContent = 'Enter a valid price.'; return; }
+    $('#qeSave').disabled = true;
+    const { error } = await sb.from('registry_items').update({ title, price }).eq('id', item.id);
+    if (error) { $('#qeError').textContent = 'Could not save — try again.'; $('#qeSave').disabled = false; return; }
+    closeModal();
+    await refresh();
+    toast('Item updated');
+  });
+}
+
+function openDeleteConfirm(item) {
+  const gifts = contribsFor(item.id).length;
+  openModal(`
+    <h2>Delete this item?</h2>
+    <p class="sub"><b>${esc(item.title)}</b> will be removed from the registry${gifts ? ` along with ${gifts} gift record${gifts === 1 ? '' : 's'}` : ''}. This can’t be undone.</p>
+    <div style="display:flex;gap:10px;margin-top:8px">
+      <button class="btn btn-danger" style="flex:1" id="delYes">${ICONS.trash} Delete item</button>
+      <button class="btn btn-ghost" style="flex:1" data-close>Cancel</button>
+    </div>`);
+
+  $('#delYes').addEventListener('click', async () => {
+    $('#delYes').disabled = true;
+    const { error } = await sb.from('registry_items').delete().eq('id', item.id);
+    if (error) {
+      toast('Could not delete — try again');
+      $('#delYes').disabled = false;
+      return;
+    }
+    closeModal();
+    await refresh();
+    toast('Item deleted');
   });
 }
 
@@ -478,7 +793,7 @@ async function refresh() {
 }
 
 document.addEventListener('click', (e) => {
-  const t = e.target.closest('[data-close], [data-contribute], [data-payfull], [data-edit], [data-delete], [data-received], [data-contribs]');
+  const t = e.target.closest('[data-close], [data-contribute], [data-payfull], [data-edit], [data-edit-full], [data-delete], [data-received], [data-contribs]');
   if (!t) {
     if (e.target === $('#overlay')) closeModal();
     return;
@@ -487,17 +802,13 @@ document.addEventListener('click', (e) => {
   if (t.hasAttribute('data-close')) closeModal();
   else if (t.dataset.contribute) openContribute(item(t.dataset.contribute), false);
   else if (t.dataset.payfull) openContribute(item(t.dataset.payfull), true);
-  else if (t.dataset.edit) openItemForm(item(t.dataset.edit));
+  else if (t.dataset.edit) openQuickEdit(item(t.dataset.edit));
+  else if (t.dataset.editFull) openItemFormFull(item(t.dataset.editFull), true);
   else if (t.dataset.contribs) openContribsList(item(t.dataset.contribs));
   else if (t.dataset.received) {
     const it = item(t.dataset.received);
     sb.from('registry_items').update({ received: !it.received }).eq('id', it.id).then(refresh);
-  } else if (t.dataset.delete) {
-    const it = item(t.dataset.delete);
-    if (confirm(`Delete "${it.title}" and its contributions?`)) {
-      sb.from('registry_items').delete().eq('id', it.id).then(refresh);
-    }
-  }
+  } else if (t.dataset.delete) openDeleteConfirm(item(t.dataset.delete));
 });
 
 $('#btnAdmin').addEventListener('click', promptAdmin);
