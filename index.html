@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Our Baby Registry</title>
+  <meta name="description" content="Help us welcome our little one — chip in toward the things we've picked out.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..800;1,9..144,300..800&family=Karla:ital,wght@0,300..800;1,300..800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23C96F4A' stroke-width='2' stroke-linecap='round'><path d='M12 21c-4-3.5-8-6.6-8-10.4C4 7.7 6 6 8.4 6c1.5 0 2.9.8 3.6 2 .7-1.2 2.1-2 3.6-2C18 6 20 7.7 20 10.6c0 3.8-4 6.9-8 10.4z'/></svg>">
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+
+  <header class="hero">
+    <div class="hero-inner">
+      <svg class="hero-arc" viewBox="0 0 120 60" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        <path d="M10 55 C10 20, 110 20, 110 55" stroke-dasharray="3 6"/>
+        <path d="M52 30 l3 -8 3 8 M55 25 h6" opacity="0"/>
+        <circle cx="60" cy="14" r="3"/>
+        <path d="M28 38 l2.2 4.4 4.8.8 -3.5 3.4.8 4.8 -4.3-2.3 -4.3 2.3.8-4.8 -3.5-3.4 4.8-.8z" transform="scale(.55) translate(20 30)"/>
+      </svg>
+      <p class="hero-eyebrow" id="heroEyebrow">A little one is on the way</p>
+      <h1 class="hero-title" id="heroTitle">Our Baby Registry</h1>
+      <p class="hero-note" id="heroNote"></p>
+      <div class="hero-stats" id="heroStats"></div>
+    </div>
+    <svg class="hero-wave" viewBox="0 0 1440 48" preserveAspectRatio="none" aria-hidden="true">
+      <path d="M0 24 C120 44 240 4 360 24 C480 44 600 4 720 24 C840 44 960 4 1080 24 C1200 44 1320 4 1440 24 L1440 48 L0 48 Z" fill="var(--paper)"/>
+    </svg>
+  </header>
+
+  <main class="page">
+    <div class="admin-bar" id="adminBar" hidden>
+      <span class="admin-bar-label">Parent mode</span>
+      <button class="btn btn-small" id="btnAddItem">Add item</button>
+      <button class="btn btn-small btn-ghost" id="btnSettings">Settings</button>
+      <button class="btn btn-small btn-ghost" id="btnExitAdmin">Exit</button>
+    </div>
+    <section class="grid" id="grid">
+      <div class="loading" id="loading">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="spin"><path d="M12 3a9 9 0 1 0 9 9"/></svg>
+        <span>Setting the nursery&hellip;</span>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span id="footerNames"></span>
+    <button class="linklike" id="btnAdmin">For parents</button>
+  </footer>
+
+  <div class="overlay" id="overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" id="modal"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
