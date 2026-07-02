@@ -137,6 +137,46 @@ function amazonPrice(html: string): number | null {
   return priceFromText(html);
 }
 
+function cleanUrl(raw: string): string {
+  try {
+    const parsed = new URL(raw.trim());
+    const drop = [
+      /^utm_/i, /^gclid$/i, /^gclsrc$/i, /^gbraid$/i, /^gad_/i, /^cm_mmc$/i,
+      /^fbclid$/i, /^msclkid$/i, /^mc_/i,
+    ];
+    [...parsed.searchParams.keys()].forEach((key) => {
+      if (drop.some((re) => re.test(key))) parsed.searchParams.delete(key);
+    });
+    parsed.hash = "";
+    return parsed.href;
+  } catch {
+    return raw.trim();
+  }
+}
+
+function titleFromSlug(slug: string): string {
+  return decodeURIComponent(slug)
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .slice(0, 120);
+}
+
+function inferFromUrl(url: URL): Partial<ProductMeta> {
+  const out: Partial<ProductMeta> = { retailer: detectRetailer(url) || null };
+  const parts = url.pathname.split("/").filter(Boolean);
+
+  // carters.com/p/slug/id, target.com/p/name/-/A-123, amazon.com/Name/dp/ASIN
+  const slugCandidates = parts.filter((p) =>
+    p.length > 3 && !/^\d+$/.test(p) && !/^[A-Z0-9-]{5,15}$/.test(p) && p !== "p" && p !== "dp" && p !== "gp"
+  );
+  const slug = slugCandidates.sort((a, b) => b.length - a.length)[0];
+  if (slug) out.title = titleFromSlug(slug);
+
+  return out;
+}
+
 function cleanTitle(title: string, retailer: string): string {
   let t = title
     .replace(/\s*:\s*Amazon\.com.*$/i, "")
@@ -144,6 +184,7 @@ function cleanTitle(title: string, retailer: string): string {
     .replace(/\s*[-|]\s*Walmart\.com.*$/i, "")
     .replace(/\s*[-|]\s*Etsy.*$/i, "")
     .replace(/\s*[-|]\s*Amazon.*$/i, "")
+    .replace(/\s*[-|]\s*Carter'?s.*$/i, "")
     .trim();
   if (retailer && t.toLowerCase().endsWith(` - ${retailer.toLowerCase()}`)) {
     t = t.slice(0, -(retailer.length + 3)).trim();
@@ -204,7 +245,7 @@ async function scrapeHtml(url: string): Promise<Partial<ProductMeta>> {
       Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "Accept-Language": "en-US,en;q=0.9",
     },
-    signal: AbortSignal.timeout(12000),
+    signal: AbortSignal.timeout(5000),
   });
   if (!res.ok) throw new Error(`Store returned ${res.status}`);
 
@@ -214,6 +255,9 @@ async function scrapeHtml(url: string): Promise<Partial<ProductMeta>> {
   }
 
   const html = await res.text();
+  if (/access to this page has been denied|px-captcha|perimeterx/i.test(html)) {
+    throw new Error("Store blocked automated lookup");
+  }
   const parsed = new URL(url);
   const retailer = detectRetailer(parsed);
   const ld = jsonLd(html);
@@ -245,7 +289,7 @@ async function scrapeHtml(url: string): Promise<Partial<ProductMeta>> {
 async function fetchMicrolink(url: string): Promise<Partial<ProductMeta>> {
   try {
     const res = await fetch(`https://api.microlink.io?url=${encodeURIComponent(url)}`, {
-      signal: AbortSignal.timeout(12000),
+      signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return {};
     const json = await res.json();
@@ -303,7 +347,7 @@ Deno.serve(async (req) => {
 
     let parsed: URL;
     try {
-      parsed = new URL(raw.trim());
+      parsed = new URL(cleanUrl(raw));
     } catch {
       return new Response(JSON.stringify({ error: "Invalid URL" }), {
         status: 400,
@@ -318,6 +362,9 @@ Deno.serve(async (req) => {
     }
 
     const href = parsed.href;
+    const inferred = inferFromUrl(parsed);
+    const host = parsed.hostname.toLowerCase();
+    const skipMicrolink = /carters\.com|crateandbarrel|potterybarn|buybuybaby/.test(host);
     const asin = extractAmazonAsin(href);
     const amazonFallback: Partial<ProductMeta> = asin
       ? { image_url: amazonImageFromAsin(asin), retailer: "Amazon" }
@@ -325,10 +372,10 @@ Deno.serve(async (req) => {
 
     const [scraped, microlink] = await Promise.all([
       scrapeHtml(href).catch(() => ({})),
-      fetchMicrolink(href),
+      skipMicrolink ? Promise.resolve({}) : fetchMicrolink(href),
     ]);
 
-    const result = mergeMeta(scraped, microlink, amazonFallback, {
+    const result = mergeMeta(scraped, microlink, amazonFallback, inferred, {
       retailer: detectRetailer(parsed) || null,
     });
 
@@ -339,7 +386,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    return new Response(JSON.stringify(result), {
+    return new Response(JSON.stringify({ ...result, partial: !(result.title && result.image_url && result.price != null) }), {
       headers: { ...cors, "Content-Type": "application/json" },
     });
   } catch (e) {

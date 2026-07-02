@@ -372,27 +372,46 @@ function normalizeProductUrl(raw) {
   return url;
 }
 
+function cleanProductUrl(raw) {
+  let url = normalizeProductUrl(raw);
+  if (!url) return '';
+  try {
+    const parsed = new URL(url);
+    const drop = [
+      /^utm_/i, /^gclid$/i, /^gclsrc$/i, /^gbraid$/i, /^gad_/i, /^cm_mmc$/i,
+      /^fbclid$/i, /^msclkid$/i, /^mc_/i, /^ref$/i,
+    ];
+    [...parsed.searchParams.keys()].forEach((key) => {
+      if (drop.some((re) => re.test(key))) parsed.searchParams.delete(key);
+    });
+    parsed.hash = '';
+    return parsed.href;
+  } catch {
+    return url;
+  }
+}
+
 async function fetchProductFromUrl(rawUrl) {
-  const url = normalizeProductUrl(rawUrl);
+  const url = cleanProductUrl(rawUrl);
   if (!url) throw new Error('Enter a product link first');
 
-  const { data, error } = await sb.functions.invoke('fetch-product', { body: { url } });
-  if (!error && data && !data.error) return data;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
 
-  const res = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/fetch-product`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: CONFIG.SUPABASE_KEY,
-      Authorization: `Bearer ${CONFIG.SUPABASE_KEY}`,
-    },
-    body: JSON.stringify({ url }),
-  });
-  const fallback = await res.json();
-  if (!res.ok || fallback.error) {
-    throw new Error(fallback.error || error?.message || 'Could not fetch product');
+  try {
+    const { data, error } = await sb.functions.invoke('fetch-product', {
+      body: { url },
+      signal: controller.signal,
+    });
+    if (!error && data && !data.error) return data;
+    if (data?.error) throw new Error(data.error);
+    throw new Error(error?.message || 'Could not fetch product');
+  } catch (err) {
+    if (err?.name === 'AbortError') throw new Error('Lookup timed out — enter details manually.');
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
-  return fallback;
 }
 
 function promptAdmin() {
@@ -465,6 +484,9 @@ function openItemForm(item) {
   let fetchSeq = 0;
   let urlTimer;
   let lookupDone = false;
+  let suppressUrlInput = false;
+  let lastLookupUrl = '';
+  let lookupInFlight = false;
   const fetched = { title: '', price: null, image_url: '', retailer: '' };
 
   const setHint = (msg, cls = '') => {
@@ -529,9 +551,11 @@ function openItemForm(item) {
 
     renderFound();
     if (anyMissing) {
-      $('#fManualLabel').textContent = anyMissing === (needs.title && needs.price && needs.image)
-        ? "Couldn't read this link — fill in the details:"
-        : 'Fill in what we couldn\'t find:';
+      $('#fManualLabel').textContent = data.partial
+        ? 'This store blocks auto-lookup — we guessed the title from the link. Add price and photo:'
+        : (needs.title && needs.price && needs.image)
+          ? "Couldn't read this link — fill in the details:"
+          : 'Fill in what we couldn\'t find:';
       showManualFields(needs);
     } else {
       show('#fManual', false);
@@ -542,13 +566,15 @@ function openItemForm(item) {
     syncSave();
   };
 
-  const handleUrlFetch = async (rawUrl) => {
-    const url = normalizeProductUrl(rawUrl);
+  const handleUrlFetch = async (rawUrl, { force = false } = {}) => {
+    const url = cleanProductUrl(rawUrl);
     if (!url || url.length < 12) return;
-    if ($('#fUrl').value.trim() !== url) $('#fUrl').value = url;
+    if (!force && (url === lastLookupUrl || lookupInFlight)) return;
 
     const seq = ++fetchSeq;
+    lookupInFlight = true;
     lookupDone = false;
+    lastLookupUrl = url;
     $('#fError').textContent = '';
     show('#fLoading', true);
     show('#fFound', false);
@@ -556,6 +582,12 @@ function openItemForm(item) {
     show('#fNoteWrap', false);
     $('#fSave').disabled = true;
     setHint('Looking up product…', 'hint-loading');
+
+    if ($('#fUrl').value.trim() !== url) {
+      suppressUrlInput = true;
+      $('#fUrl').value = url;
+      suppressUrlInput = false;
+    }
 
     try {
       const data = await fetchProductFromUrl(url);
@@ -569,7 +601,7 @@ function openItemForm(item) {
       fetched.price = null;
       fetched.image_url = '';
       fetched.retailer = detectRetailer(url);
-      setHint('Could not read that link — enter the details below.');
+      setHint(err?.message || 'Could not read that link — enter the details below.');
       show('#fFound', false);
       showManualFields({ title: true, price: true, image: true, retailer: true });
       if (fetched.retailer) $('#fRetailer').value = fetched.retailer;
@@ -577,21 +609,29 @@ function openItemForm(item) {
       lookupDone = true;
       syncSave();
       console.error('Product lookup failed:', err);
+    } finally {
+      if (seq === fetchSeq) lookupInFlight = false;
     }
   };
 
   const queueUrlFetch = (raw) => {
+    if (suppressUrlInput) return;
     clearTimeout(urlTimer);
-    const url = normalizeProductUrl(raw);
+    const url = cleanProductUrl(raw);
     if (!url || url.length < 12) {
-      setHint('Paste or type a product link.');
+      setHint('Paste a product link from any store.');
       return;
     }
-    urlTimer = setTimeout(() => handleUrlFetch(raw), 600);
+    if (!/^https?:\/\/[^/]+\/[^/]+/i.test(url)) return;
+    urlTimer = setTimeout(() => handleUrlFetch(raw), 800);
   };
 
   $('#fUrl').addEventListener('input', () => queueUrlFetch($('#fUrl').value));
-  $('#fUrl').addEventListener('paste', () => setTimeout(() => handleUrlFetch($('#fUrl').value), 80));
+  $('#fUrl').addEventListener('paste', () => setTimeout(() => handleUrlFetch($('#fUrl').value, { force: true }), 100));
+  $('#fUrl').addEventListener('blur', () => {
+    const url = cleanProductUrl($('#fUrl').value);
+    if (url && url !== lastLookupUrl) handleUrlFetch(url, { force: true });
+  });
   ['fTitle', 'fPrice', 'fImage', 'fRetailer'].forEach((id) => {
     const el = $(`#${id}`);
     if (el) el.addEventListener('input', () => {
@@ -607,7 +647,7 @@ function openItemForm(item) {
   $('#fSave').addEventListener('click', async () => {
     const rec = {
       title: fetched.title || $('#fTitle').value.trim(),
-      product_url: normalizeProductUrl($('#fUrl').value),
+      product_url: cleanProductUrl($('#fUrl').value),
       image_url: fetched.image_url || $('#fImage').value.trim(),
       retailer: fetched.retailer || $('#fRetailer').value.trim() || detectRetailer($('#fUrl').value),
       price: Math.round(parseFloat(String(fetched.price ?? $('#fPrice').value) || '0') * 100) / 100,
@@ -656,7 +696,7 @@ function openItemFormFull(item, isEdit) {
   $('#fSave').addEventListener('click', async () => {
     const rec = {
       title: $('#fTitle').value.trim(),
-      product_url: normalizeProductUrl($('#fUrl').value),
+      product_url: cleanProductUrl($('#fUrl').value),
       image_url: $('#fImage').value.trim(),
       retailer: $('#fRetailer').value.trim() || detectRetailer($('#fUrl').value),
       price: Math.round(parseFloat($('#fPrice').value || '0') * 100) / 100,
