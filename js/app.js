@@ -204,14 +204,17 @@ function cardHTML(item, idx) {
   const full = remaining <= 0;
   const confirmed = contribsFor(item.id).filter((c) => c.confirmed);
 
-  const media = productImageHTML(item);
+  const mediaInner = productImageHTML(item);
+  const mediaLink = item.product_url
+    ? `<a class="card-media-link" href="${esc(item.product_url)}" target="_blank" rel="noopener" aria-label="View ${esc(item.title)}">${mediaInner}</a>`
+    : mediaInner;
 
   const badge = item.received
     ? `<span class="badge badge-received">${ICONS.check} Received</span>`
     : full ? `<span class="badge badge-funded">${ICONS.check} Paid</span>` : '';
 
   const title = item.product_url
-    ? `<a href="${esc(item.product_url)}" target="_blank" rel="noopener">${esc(item.title)}${ICONS.ext}</a>`
+    ? `<a class="card-title-link" href="${esc(item.product_url)}" target="_blank" rel="noopener">${esc(item.title)}${ICONS.ext}</a>`
     : esc(item.title);
 
   const actions = item.received || full
@@ -242,8 +245,8 @@ function cardHTML(item, idx) {
        </div>`
     : '';
 
-  return `<article class="card ${full ? 'card-complete' : ''}" style="animation-delay:${Math.min(idx * 60, 400)}ms">
-    <div class="card-media tint-${idx % 4}">${media}${item.retailer ? `<span class="chip">${esc(item.retailer)}</span>` : ''}${badge}</div>
+  return `<article class="card ${full ? 'card-complete' : ''} ${item.product_url ? 'card-has-link' : ''}" style="animation-delay:${Math.min(idx * 60, 400)}ms">
+    <div class="card-media tint-${idx % 4}">${mediaLink}${item.retailer ? `<span class="chip">${esc(item.retailer)}</span>` : ''}${badge}</div>
     <div class="card-body">
       <h3 class="card-title">${title}</h3>
       ${item.note ? `<p class="card-note">${esc(item.note)}</p>` : ''}
@@ -944,13 +947,22 @@ function renderCatalogGrid(filter = 'All') {
   $('#catalogMeta').textContent = `${added} of ${items.length} on your list`;
   $('#catalogGrid').innerHTML = items.map((item) => {
     const onList = isCatalogItemAdded(item);
+    const link = item.product_url
+      ? `<a class="catalog-card-link" href="${esc(item.product_url)}" target="_blank" rel="noopener">
+          <div class="catalog-card-media">
+            ${catalogImageHTML(item)}
+            <span class="catalog-cat">${esc(item.category)}</span>
+          </div>
+          <h4>${esc(item.title)}</h4>
+        </a>`
+      : `<div class="catalog-card-media">
+          ${catalogImageHTML(item)}
+          <span class="catalog-cat">${esc(item.category)}</span>
+        </div>
+        <h4>${esc(item.title)}</h4>`;
     return `<article class="catalog-card ${onList ? 'catalog-added' : ''}">
-      <div class="catalog-card-media">
-        ${catalogImageHTML(item)}
-        <span class="catalog-cat">${esc(item.category)}</span>
-      </div>
+      ${link}
       <div class="catalog-card-body">
-        <h4>${esc(item.title)}</h4>
         <div class="catalog-card-meta"><span>${money(item.price)}</span><span>${esc(item.retailer)}</span></div>
         <button type="button" class="btn btn-small ${onList ? 'btn-ghost' : ''} btn-block catalog-add" data-catalog-id="${esc(item.id)}" ${onList ? 'disabled' : ''}>
           ${onList ? `${ICONS.check} On your list` : 'Add to registry'}
@@ -975,6 +987,8 @@ function openCatalogPicker() {
     `<button type="button" class="catalog-filter ${cat === filter ? 'on' : ''}" data-cat="${esc(cat)}">${esc(cat)}</button>`,
   ).join('');
   renderCatalogGrid(filter);
+
+  primeCatalogImages(BABY_CATALOG).then(() => renderCatalogGrid(filter));
 
   filters.addEventListener('click', (e) => {
     const btn = e.target.closest('.catalog-filter');

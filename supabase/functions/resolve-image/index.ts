@@ -31,7 +31,11 @@ function amazonImageCandidates(asin: string): string[] {
 }
 
 function isBadImage(url: string): boolean {
-  return !url || url.startsWith("data:") || url.includes("1x1");
+  return !url || url.startsWith("data:") || url.includes("1x1") || url.includes("error/logo");
+}
+
+function isAmazonAsinThumb(url: string): boolean {
+  return /\/images\/P\/[A-Z0-9]{10}\./i.test(url);
 }
 
 async function isImageReachable(url: string): Promise<boolean> {
@@ -40,11 +44,21 @@ async function isImageReachable(url: string): Promise<boolean> {
     const res = await fetch(url, {
       method: "GET",
       redirect: "follow",
-      headers: { "User-Agent": UA, Range: "bytes=0-2048" },
+      headers: { "User-Agent": UA, Range: "bytes=0-8192" },
       signal: AbortSignal.timeout(6000),
     });
+    if (!res.ok) return false;
     const ct = res.headers.get("content-type") ?? "";
-    return res.ok && (ct.startsWith("image/") || ct.includes("octet-stream"));
+    if (!ct.startsWith("image/") && !ct.includes("octet-stream")) return false;
+
+    const len = parseInt(res.headers.get("content-length") ?? "0", 10);
+    if (ct.includes("gif") && len > 0 && len < 2048) return false;
+
+    const buf = new Uint8Array(await res.arrayBuffer());
+    if (buf.length < 512) return false;
+    if (ct.includes("gif") && buf.length < 2048 && isAmazonAsinThumb(url)) return false;
+
+    return true;
   } catch {
     return false;
   }
@@ -155,35 +169,45 @@ async function resolveBestImage(body: {
   title?: string;
   product_url?: string;
   image_url?: string;
+  force_search?: boolean;
 }): Promise<string | null> {
   const title = (body.title || "").trim();
   const productUrl = (body.product_url || "").trim();
   const current = (body.image_url || "").trim();
+  const forceSearch = !!body.force_search;
 
   const candidates: string[] = [];
   const push = (u?: string | null) => {
     if (u && !isBadImage(u) && !candidates.includes(u)) candidates.push(u);
   };
 
-  push(current);
-
-  const asin = extractAsin(productUrl || current);
-  if (asin) amazonImageCandidates(asin).forEach(push);
-
   const scraped = await scrapeProductImages(productUrl);
   scraped.forEach(push);
 
-  const micro = await fetchMicrolinkImage(productUrl);
-  push(micro);
+  if (!forceSearch) {
+    push(current);
+    const asin = extractAsin(productUrl || current);
+    if (asin) amazonImageCandidates(asin).forEach(push);
+    const micro = await fetchMicrolinkImage(productUrl);
+    push(micro);
+  }
 
   const local = await firstReachable(candidates);
-  if (local) return local;
+  if (local && !isAmazonAsinThumb(local)) return local;
+  if (local && !forceSearch) {
+    const searchQuery = [title, "baby product"].filter(Boolean).join(" ").trim();
+    if (searchQuery.length > 4) {
+      const searched = await googleImageSearch(searchQuery);
+      if (searched) return searched;
+    }
+    return local;
+  }
 
-  const searchQuery = [title, "baby product"].filter(Boolean).join(" ").trim();
+  const searchQuery = [title, "baby product amazon"].filter(Boolean).join(" ").trim();
   if (searchQuery.length > 4) {
     return await googleImageSearch(searchQuery);
   }
-  return null;
+  return local;
 }
 
 Deno.serve(async (req) => {
