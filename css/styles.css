@@ -178,22 +178,32 @@ body { background: var(--paper); }
 }
 .badge svg { width: 13px; height: 13px; }
 .badge-funded {
-  background: rgba(90, 88, 82, .72);
-  color: rgba(255, 252, 246, .92);
+  background: var(--sage-deep);
+  color: #F2F6EF;
   font-size: 12.5px;
   padding: 6px 13px;
   gap: 6px;
+  z-index: 2;
 }
-.badge-funded svg { width: 16px; height: 16px; opacity: .88; }
+.badge-funded svg { width: 16px; height: 16px; }
 .badge-received { background: var(--butter); color: #6B531D; }
 
-.card-complete { opacity: .92; }
+.card-complete {
+  background: #EEEDEA;
+  border-color: rgba(158, 154, 146, .4);
+  box-shadow: 0 4px 14px -8px rgba(94, 70, 48, .18);
+}
+.card-complete:hover { transform: none; box-shadow: 0 4px 14px -8px rgba(94, 70, 48, .18); }
 .card-complete .card-media::after {
   content: ""; position: absolute; inset: 0;
-  background: linear-gradient(180deg, transparent 40%, rgba(95,127,92,.12));
+  background: rgba(88, 86, 80, .2);
   pointer-events: none;
+  z-index: 1;
 }
+.card-complete .card-media img { filter: grayscale(.5) brightness(.93); }
+.card-complete .card-body { opacity: .86; }
 .card-complete .card-title { color: var(--ink-soft); }
+.card-complete .progress i.full { background: rgba(95, 127, 92, .45); }
 
 .supporters {
   margin-top: 4px; padding-top: 12px;
@@ -546,6 +556,7 @@ body.mode-guest .admin-bar { display: none !important; }
   .badge svg { width: 10px; height: 10px; }
   .badge-funded { font-size: 10.5px; padding: 4px 9px; gap: 4px; }
   .badge-funded svg { width: 13px; height: 13px; }
+  .card-complete .card-media img { filter: grayscale(.45) brightness(.94); }
   .card-body { padding: 10px 10px 12px; gap: 8px; }
   .card-title { font-size: 14px; line-height: 1.2; }
   .card-title svg { width: 11px; height: 11px; }
