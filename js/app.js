@@ -436,7 +436,7 @@ function wireConfirmButtons(contribId, amount, title) {
     openModal(`
       <div class="thanks">${ICONS.heart}
         <h2>Thank you!</h2>
-        <p class="sub">Your ${money(amount)} toward <b>${esc(title)}</b> means the world to us.</p>
+        <p class="sub">We are so grateful for your generosity. Love the Wilsons</p>
         <button class="btn btn-block" data-close>Back to the registry</button>
       </div>`);
   });
