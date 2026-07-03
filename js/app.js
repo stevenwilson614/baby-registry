@@ -181,7 +181,7 @@ function render() {
   ).size;
   $('#heroStats').innerHTML = state.items.length
     ? `<span class="stat">${ICONS.gift}<span><b>${state.items.length}</b> item${state.items.length === 1 ? '' : 's'}</span></span>
-       <span class="stat">${ICONS.heart}<span><b>${money(totalRaised)}</b> of ${money(totalPrice)} chipped in</span></span>
+       ${state.admin ? `<span class="stat">${ICONS.heart}<span><b>${money(totalRaised)}</b> of ${money(totalPrice)} chipped in</span></span>` : ''}
        ${givers ? `<span class="stat">${ICONS.users}<span><b>${givers}</b> generous ${givers === 1 ? 'soul' : 'souls'}</span></span>` : ''}`
     : '';
 
