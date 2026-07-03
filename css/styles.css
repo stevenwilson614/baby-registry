@@ -177,7 +177,14 @@ body { background: var(--paper); }
   padding: 5px 11px; border-radius: 999px;
 }
 .badge svg { width: 13px; height: 13px; }
-.badge-funded { background: var(--sage-deep); color: #F2F6EF; }
+.badge-funded {
+  background: rgba(90, 88, 82, .72);
+  color: rgba(255, 252, 246, .92);
+  font-size: 12.5px;
+  padding: 6px 13px;
+  gap: 6px;
+}
+.badge-funded svg { width: 16px; height: 16px; opacity: .88; }
 .badge-received { background: var(--butter); color: #6B531D; }
 
 .card-complete { opacity: .92; }
@@ -537,6 +544,8 @@ body.mode-guest .admin-bar { display: none !important; }
     top: 6px; right: 6px; font-size: 9px; padding: 3px 7px; letter-spacing: .04em;
   }
   .badge svg { width: 10px; height: 10px; }
+  .badge-funded { font-size: 10.5px; padding: 4px 9px; gap: 4px; }
+  .badge-funded svg { width: 13px; height: 13px; }
   .card-body { padding: 10px 10px 12px; gap: 8px; }
   .card-title { font-size: 14px; line-height: 1.2; }
   .card-title svg { width: 11px; height: 11px; }
