@@ -4,6 +4,7 @@
 const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
 const PENDING_KEY = 'br_pending_contribution';
 const ADMIN_KEY = 'br_admin';
+const SORT_KEY = 'br_price_sort';
 const OLIVIA_PIN = '7230';
 const DEFAULT_VENMO_USERNAME = 'steven-wilson-614';
 const DEFAULT_ZELLE_HANDLE = 'stevenwilson614@gmail.com';
@@ -15,6 +16,7 @@ const state = {
   items: [],
   contributions: [],
   admin: sessionStorage.getItem(ADMIN_KEY) === '1',
+  priceSort: sessionStorage.getItem(SORT_KEY) || '',
 };
 
 /* ---------- helpers ---------- */
@@ -119,6 +121,34 @@ const fundedFor = (itemId) =>
   contribsFor(itemId).filter((c) => c.confirmed).reduce((sum, c) => sum + cents(c.amount), 0) / 100;
 const remainingFor = (item) => Math.max(0, (cents(item.price) - cents(fundedFor(item.id))) / 100);
 
+function sortedItems() {
+  const items = [...state.items];
+  if (state.priceSort === 'asc') items.sort((a, b) => cents(a.price) - cents(b.price));
+  else if (state.priceSort === 'desc') items.sort((a, b) => cents(b.price) - cents(a.price));
+  return items;
+}
+
+function updateSortBar() {
+  const bar = $('#sortBar');
+  if (!bar) return;
+  bar.hidden = !state.items.length;
+  bar.querySelectorAll('.sort-btn').forEach((b) => {
+    b.classList.toggle('on', b.dataset.sort === state.priceSort);
+  });
+}
+
+function renderGrid() {
+  const grid = $('#grid');
+  if (!state.items.length) {
+    grid.innerHTML = `<div class="empty">${ICONS.gift}<h3>Nothing here yet</h3>
+      <p>${state.admin ? 'Use “Add item” above to add the things you’ve bought.' : 'Check back soon — gifts are on the way.'}</p></div>`;
+    updateSortBar();
+    return;
+  }
+  grid.innerHTML = sortedItems().map(cardHTML).join('');
+  updateSortBar();
+}
+
 /* ---------- render ---------- */
 function render() {
   const s = state.settings;
@@ -162,13 +192,7 @@ function render() {
   $('#btnExitGuest').hidden = !state.admin;
   $('#heroEyebrow').textContent = state.admin ? 'Managing the registry' : 'Our little one is on the way';
 
-  const grid = $('#grid');
-  if (!state.items.length) {
-    grid.innerHTML = `<div class="empty">${ICONS.gift}<h3>Nothing here yet</h3>
-      <p>${state.admin ? 'Use “Add item” above to add the things you’ve bought.' : 'Check back soon — gifts are on the way.'}</p></div>`;
-    return;
-  }
-  grid.innerHTML = state.items.map(cardHTML).join('');
+  renderGrid();
 }
 
 function cardHTML(item, idx) {
@@ -973,6 +997,15 @@ $('#btnExitAdmin').addEventListener('click', exitOlivia);
 $('#btnExitGuest').addEventListener('click', exitOlivia);
 $('#btnAddItem').addEventListener('click', () => openItemForm(null));
 $('#btnSettings').addEventListener('click', openSettings);
+document.getElementById('sortBar')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.sort-btn');
+  if (!btn) return;
+  const next = btn.dataset.sort;
+  state.priceSort = state.priceSort === next ? '' : next;
+  if (state.priceSort) sessionStorage.setItem(SORT_KEY, state.priceSort);
+  else sessionStorage.removeItem(SORT_KEY);
+  renderGrid();
+});
 document.addEventListener('keydown', (e) => e.key === 'Escape' && closeModal());
 
 (async function init() {
