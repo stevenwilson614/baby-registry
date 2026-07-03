@@ -62,32 +62,31 @@ function buildVenmoUrl(user, amount, note) {
 }
 
 function buildZelleUrls(handle, amount, note) {
-  const email = encodeURIComponent(handle);
+  const token = encodeURIComponent(handle);
   const amt = Number(amount).toFixed(2);
   const memo = encodeURIComponent(note);
-  return [
-    `zelle://pay?email=${email}&amount=${amt}&memo=${memo}`,
-    `zelle://send?email=${email}&amount=${amt}&memo=${memo}`,
-    `zelle://send?token=${email}&amount=${amt}`,
+  const urls = [
+    `zelle://pay?email=${token}&amount=${amt}&memo=${memo}`,
+    `zelle://send?email=${token}&amount=${amt}&memo=${memo}`,
+    `zelle://send?token=${token}&amount=${amt}`,
     'zelle://',
   ];
+  if (/Android/i.test(navigator.userAgent)) {
+    urls.unshift(
+      `intent://send#Intent;scheme=zelle;package=com.zellepay.zelle;end`,
+    );
+  }
+  return urls;
+}
+
+function zelleClipboardSummary(handle, amount, note) {
+  return `Zelle to: ${handle}\nAmount: ${money(amount)}\nMemo: ${note}`;
 }
 
 function openZelleApp(handle, amount, note) {
-  const urls = buildZelleUrls(handle, amount, note);
-  const summary = `Send ${money(amount)} via Zelle to ${handle}\nMemo: ${note}`;
-  navigator.clipboard?.writeText(summary).catch(() => {});
-
-  const link = document.createElement('a');
-  link.href = urls[0];
-  link.style.display = 'none';
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-
-  setTimeout(() => {
-    try { window.open(urls[0], '_blank', 'noopener'); } catch { /* no Zelle app */ }
-  }, 250);
+  const url = buildZelleUrls(handle, amount, note)[0];
+  navigator.clipboard?.writeText(zelleClipboardSummary(handle, amount, note)).catch(() => {});
+  window.location.href = url;
 }
 
 function toast(msg) {
@@ -318,7 +317,7 @@ function openContribute(item, payFull) {
     <div class="field"><label>How would you like to send it?</label>
       <div class="method-row">
         <button type="button" class="method-btn ${hasVenmo ? '' : 'off'}" data-method="venmo" ${hasVenmo ? '' : 'disabled'}>${ICONS.phone} Venmo <small>opens the app</small></button>
-        <button type="button" class="method-btn" data-method="zelle" ${hasZelle ? '' : 'disabled'}>${ICONS.bank} Zelle <small>opens the app</small></button>
+        <button type="button" class="method-btn" data-method="zelle" ${hasZelle ? '' : 'disabled'}>${ICONS.bank} Zelle <small>opens your bank app</small></button>
       </div>
     </div>
     <p class="form-error" id="cError"></p>
@@ -360,6 +359,13 @@ function openContribute(item, payFull) {
   const submitPayment = async (paymentMethod) => {
     const form = validateForm();
     if (!form) return;
+
+    if (paymentMethod === 'zelle') {
+      const handle = zelleHandle(state.settings);
+      const note = `Baby registry - ${item.title}`;
+      openZelleApp(handle, form.amount, note);
+    }
+
     $('#cGo').disabled = true;
     try {
       await startPayment(item, { ...form, method: paymentMethod });
@@ -421,7 +427,6 @@ async function startPayment(item, { name, amount, method, message, anonymous }) 
     const handle = zelleHandle(s);
     const note = `Baby registry - ${item.title}`;
     const zelleUrl = buildZelleUrls(handle, amount, note)[0];
-    openZelleApp(handle, amount, note);
     payArea = `
       <div class="pay-panel">
         <div class="rowline"><span>Send to</span><b>${esc(handle)}</b><button class="copybtn" data-copy="${esc(handle)}">${ICONS.copy} Copy</button></div>
@@ -429,8 +434,8 @@ async function startPayment(item, { name, amount, method, message, anonymous }) 
         <div class="rowline"><span>Amount</span><b>${money(amount)}</b></div>
         <div class="rowline"><span>Memo</span><b>${esc(note)}</b></div>
       </div>
-      <p class="sub">We tried to open Zelle with your payment details. If it didn’t open,
-        <a href="${esc(zelleUrl)}">tap here to open Zelle</a> or send ${money(amount)} to <b>${esc(handle)}</b> in your bank app.</p>
+      <a class="btn btn-sage btn-block zelle-open-btn" href="${esc(zelleUrl)}">Open Zelle / bank app</a>
+      <p class="sub">Zelle lives inside your bank app, so we can&rsquo;t pre-fill a payment like Venmo. Tap the button above, or open your bank app and send ${money(amount)} to <b>${esc(handle)}</b>.</p>
       <p class="sub">Payment details were copied to your clipboard.</p>`;
   }
 
@@ -450,6 +455,11 @@ async function startPayment(item, { name, amount, method, message, anonymous }) 
 function wireConfirmButtons(contribId, amount, title) {
   document.querySelectorAll('[data-copy]').forEach((b) =>
     b.addEventListener('click', () => { navigator.clipboard.writeText(b.dataset.copy); toast('Copied'); }));
+  document.querySelector('.zelle-open-btn')?.addEventListener('click', () => {
+    const handle = zelleHandle(state.settings);
+    const note = `Baby registry - ${title}`;
+    navigator.clipboard?.writeText(zelleClipboardSummary(handle, amount, note)).catch(() => {});
+  });
   $('#paidYes').addEventListener('click', async () => {
     $('#paidYes').disabled = true;
     const { error } = await sb.from('registry_contributions').update({ confirmed: true }).eq('id', contribId);

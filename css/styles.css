@@ -430,6 +430,7 @@ body.mode-guest .admin-bar { display: none !important; }
 }
 .pay-panel .rowline { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; gap: 10px; }
 .pay-panel .rowline b { font-weight: 800; word-break: break-all; }
+.zelle-open-btn { margin: 12px 0 8px; text-align: center; text-decoration: none; display: block; }
 .copybtn {
   border: none; background: var(--paper); border-radius: var(--r-sm); cursor: pointer;
   padding: 5px 10px; font-size: 12px; font-weight: 800; color: var(--clay-deep);
