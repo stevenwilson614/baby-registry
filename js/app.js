@@ -146,6 +146,8 @@ function renderGrid() {
     return;
   }
   grid.innerHTML = sortedItems().map(cardHTML).join('');
+  primeItemImages(state.items);
+  wireProductImages(grid);
   updateSortBar();
 }
 
@@ -202,10 +204,7 @@ function cardHTML(item, idx) {
   const full = remaining <= 0;
   const confirmed = contribsFor(item.id).filter((c) => c.confirmed);
 
-  const media = item.image_url
-    ? `<img src="${esc(item.image_url)}" alt="${esc(item.title)}" loading="lazy"
-         onerror="this.outerHTML='<div class=&quot;placeholder&quot;>${PLACEHOLDERS[idx % 4].replace(/"/g, '&quot;')}</div>'">`
-    : `<div class="placeholder">${PLACEHOLDERS[idx % 4]}</div>`;
+  const media = productImageHTML(item);
 
   const badge = item.received
     ? `<span class="badge badge-received">${ICONS.check} Received</span>`
@@ -947,7 +946,7 @@ function renderCatalogGrid(filter = 'All') {
     const onList = isCatalogItemAdded(item);
     return `<article class="catalog-card ${onList ? 'catalog-added' : ''}">
       <div class="catalog-card-media">
-        ${item.image_url ? `<img src="${esc(item.image_url)}" alt="${esc(item.title)}" loading="lazy" onerror="this.style.display='none'">` : `<div class="catalog-card-ph">${ICONS.gift}</div>`}
+        ${catalogImageHTML(item)}
         <span class="catalog-cat">${esc(item.category)}</span>
       </div>
       <div class="catalog-card-body">
@@ -959,6 +958,7 @@ function renderCatalogGrid(filter = 'All') {
       </div>
     </article>`;
   }).join('');
+  wireProductImages($('#catalogGrid'));
 }
 
 function openCatalogPicker() {
@@ -994,7 +994,7 @@ function openCatalogPicker() {
     const rec = {
       title: item.title,
       product_url: item.product_url,
-      image_url: item.image_url || '',
+      image_url: getCachedImage(item.id) || item.image_url || '',
       retailer: item.retailer,
       category: item.category,
       price: item.price,
