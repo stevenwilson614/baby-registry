@@ -237,24 +237,15 @@ function isPlaceholderImage(url: string, width?: number, height?: number): boole
   return false;
 }
 
-async function scrapeHtml(url: string): Promise<Partial<ProductMeta>> {
-  const res = await fetch(url, {
-    redirect: "follow",
-    headers: {
-      "User-Agent": CRAWLER_UA,
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "en-US,en;q=0.9",
-    },
-    signal: AbortSignal.timeout(5000),
-  });
-  if (!res.ok) throw new Error(`Store returned ${res.status}`);
+const MOBILE_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 
-  const ct = res.headers.get("content-type") ?? "";
-  if (!ct.includes("text/html") && !ct.includes("application/xhtml")) {
-    throw new Error("Link did not return a product page");
-  }
+function walmartPrice(html: string): number | null {
+  const m = html.match(/"currentPrice":\{"price":([0-9.]+)/);
+  return m ? parsePrice(m[1]) : null;
+}
 
-  const html = await res.text();
+function parseHtmlProduct(url: string, html: string): Partial<ProductMeta> {
   if (/access to this page has been denied|px-captcha|perimeterx/i.test(html)) {
     throw new Error("Store blocked automated lookup");
   }
@@ -276,6 +267,7 @@ async function scrapeHtml(url: string): Promise<Partial<ProductMeta>> {
   const price =
     ld.price ??
     parsePrice(meta(html, ["product:price:amount", "og:price:amount"])) ??
+    walmartPrice(html) ??
     amazonPrice(html);
 
   return {
@@ -284,6 +276,37 @@ async function scrapeHtml(url: string): Promise<Partial<ProductMeta>> {
     price: price ?? null,
     retailer: retailer || null,
   };
+}
+
+async function fetchHtml(url: string, userAgent: string): Promise<string> {
+  const res = await fetch(url, {
+    redirect: "follow",
+    headers: {
+      "User-Agent": userAgent,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`Store returned ${res.status}`);
+
+  const ct = res.headers.get("content-type") ?? "";
+  if (!ct.includes("text/html") && !ct.includes("application/xhtml")) {
+    throw new Error("Link did not return a product page");
+  }
+  return res.text();
+}
+
+async function scrapeHtml(url: string): Promise<Partial<ProductMeta>> {
+  let html = await fetchHtml(url, CRAWLER_UA);
+  let out = parseHtmlProduct(url, html);
+
+  if (/walmart\.com/i.test(url) && (!out.image_url || !out.price)) {
+    html = await fetchHtml(url, MOBILE_UA);
+    out = { ...out, ...parseHtmlProduct(url, html) };
+  }
+
+  return out;
 }
 
 async function fetchMicrolink(url: string): Promise<Partial<ProductMeta>> {
