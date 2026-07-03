@@ -100,7 +100,14 @@ function toast(msg) {
 }
 
 function publicContributorName(c) {
-  return c.anonymous ? 'Anonymous' : c.contributor_name;
+  if (c.anonymous) return 'Anonymous';
+  if (state.admin) return c.contributor_name;
+  return '';
+}
+
+function publicContributorNote(c) {
+  if (c.anonymous || !state.admin) return '';
+  return c.message || '';
 }
 
 /* ---------- data ---------- */
@@ -176,13 +183,9 @@ function render() {
 
   const totalPrice = state.items.reduce((t, i) => t + cents(i.price), 0) / 100;
   const totalRaised = state.items.reduce((t, i) => t + cents(fundedFor(i.id)), 0) / 100;
-  const givers = new Set(
-    state.contributions.filter((c) => c.confirmed).map((c) => (c.anonymous ? `anon:${c.id}` : c.contributor_name.trim().toLowerCase())),
-  ).size;
   $('#heroStats').innerHTML = state.items.length
     ? `<span class="stat">${ICONS.gift}<span><b>${state.items.length}</b> item${state.items.length === 1 ? '' : 's'}</span></span>
-       ${state.admin ? `<span class="stat">${ICONS.heart}<span><b>${money(totalRaised)}</b> of ${money(totalPrice)} chipped in</span></span>` : ''}
-       ${givers ? `<span class="stat">${ICONS.users}<span><b>${givers}</b> generous ${givers === 1 ? 'soul' : 'souls'}</span></span>` : ''}`
+       ${state.admin ? `<span class="stat">${ICONS.heart}<span><b>${money(totalRaised)}</b> of ${money(totalPrice)} chipped in</span></span>` : ''}`
     : '';
 
   document.body.classList.toggle('mode-olivia', state.admin);
@@ -204,18 +207,21 @@ function cardHTML(item, idx) {
   const full = remaining <= 0;
   const confirmed = contribsFor(item.id).filter((c) => c.confirmed);
 
+  const canPay = !item.received && !full && !state.admin;
   const mediaInner = productImageHTML(item);
-  const mediaLink = item.product_url
-    ? `<a class="card-media-link" href="${esc(item.product_url)}" target="_blank" rel="noopener" aria-label="View ${esc(item.title)}">${mediaInner}</a>`
+  const mediaLink = canPay
+    ? `<button type="button" class="card-media-link" data-contribute="${item.id}" aria-label="Contribute to ${esc(item.title)}">${mediaInner}</button>`
     : mediaInner;
 
   const badge = item.received
     ? `<span class="badge badge-received">${ICONS.check} Received</span>`
     : full ? `<span class="badge badge-funded">${ICONS.check} Paid</span>` : '';
 
-  const title = item.product_url
-    ? `<a class="card-title-link" href="${esc(item.product_url)}" target="_blank" rel="noopener">${esc(item.title)}${ICONS.ext}</a>`
-    : esc(item.title);
+  const title = canPay
+    ? `<button type="button" class="card-title-link" data-contribute="${item.id}">${esc(item.title)}</button>`
+    : item.product_url
+      ? `<a class="card-title-link" href="${esc(item.product_url)}" target="_blank" rel="noopener">${esc(item.title)}${ICONS.ext}</a>`
+      : esc(item.title);
 
   const actions = item.received || full
     ? ''
@@ -227,11 +233,14 @@ function cardHTML(item, idx) {
   const supporters = confirmed.length
     ? `<div class="supporters">
          <div class="supporters-label">${ICONS.users} ${full ? 'Paid by' : 'Supported by'}</div>
-         <ul class="supporters-list">${confirmed.map((c) => `
-           <li><span class="supporter-name">${esc(publicContributorName(c))}</span>
+         <ul class="supporters-list">${confirmed.map((c) => {
+           const name = publicContributorName(c);
+           const note = publicContributorNote(c);
+           return `<li>${name ? `<span class="supporter-name">${esc(name)}</span>` : ''}
              <span class="supporter-amt">${money(c.amount)}</span>
-             ${c.message && !c.anonymous ? `<span class="supporter-note">&ldquo;${esc(c.message)}&rdquo;</span>` : ''}
-           </li>`).join('')}</ul>
+             ${note ? `<span class="supporter-note">&ldquo;${esc(note)}&rdquo;</span>` : ''}
+           </li>`;
+         }).join('')}</ul>
        </div>`
     : '';
 
@@ -245,7 +254,7 @@ function cardHTML(item, idx) {
        </div>`
     : '';
 
-  return `<article class="card ${full ? 'card-complete' : ''} ${item.product_url ? 'card-has-link' : ''}" style="animation-delay:${Math.min(idx * 60, 400)}ms">
+  return `<article class="card ${full ? 'card-complete' : ''} ${canPay ? 'card-can-pay' : ''}" style="animation-delay:${Math.min(idx * 60, 400)}ms">
     <div class="card-media tint-${idx % 4}">${mediaLink}${item.retailer ? `<span class="chip">${esc(item.retailer)}</span>` : ''}${badge}</div>
     <div class="card-body">
       <h3 class="card-title">${title}</h3>
@@ -294,7 +303,7 @@ function openContribute(item, payFull) {
     </div>
     <label class="check-row">
       <input type="checkbox" id="cAnonymous">
-      <span>Give anonymously <small>(your name won’t show on the registry)</small></span>
+      <span>Give anonymously <small>(your name and note stay private — even Olivia won&rsquo;t see them)</small></span>
     </label>
     <div class="field"><label>Amount</label>
       <div class="amount-chips">
@@ -328,8 +337,12 @@ function openContribute(item, payFull) {
 
   const syncAnonymous = () => {
     const on = $('#cAnonymous').checked;
-    $('#cName').closest('.field').classList.toggle('field-soft', on);
-    $('#cName').placeholder = on ? 'Optional — only Olivia sees this' : 'So we can thank you';
+    $('#cName').closest('.field').hidden = on;
+    $('#cMessage').closest('.field').hidden = on;
+    if (on) {
+      $('#cName').value = '';
+      $('#cMessage').value = '';
+    }
   };
   $('#cAnonymous').addEventListener('change', syncAnonymous);
   syncAnonymous();
@@ -341,7 +354,7 @@ function openContribute(item, payFull) {
     if (!(amount >= 1)) { err.textContent = 'Please enter an amount of at least $1.'; return null; }
     if (amount > remaining + 0.001) { err.textContent = `Only ${money(remaining)} is still needed for this one.`; return null; }
     err.textContent = '';
-    return { name: name || 'Anonymous', amount, message, anonymous };
+    return { name: anonymous ? 'Anonymous' : name, amount, message: anonymous ? '' : message, anonymous };
   };
 
   const submitPayment = async (paymentMethod) => {
@@ -377,7 +390,14 @@ function openContribute(item, payFull) {
 
 async function startPayment(item, { name, amount, method, message, anonymous }) {
   const { data, error } = await sb.from('registry_contributions')
-    .insert({ item_id: item.id, contributor_name: name, amount, method, message, anonymous: !!anonymous })
+    .insert({
+      item_id: item.id,
+      contributor_name: anonymous ? 'Anonymous' : name,
+      amount,
+      method,
+      message: anonymous ? '' : message,
+      anonymous: !!anonymous,
+    })
     .select().single();
   if (error) throw error;
 
@@ -909,8 +929,8 @@ function openContribsList(item) {
     <p class="sub">${esc(item.title)} &middot; ${money(fundedFor(item.id))} of ${money(item.price)} confirmed</p>
     ${list.length ? `<ul class="contrib-list">${list.map((c) => `
       <li>
-        <div class="who"><b>${esc(c.contributor_name)}</b>${c.anonymous ? ' <span class="pill pill-anon">Anonymous publicly</span>' : ''} &middot; ${money(c.amount)} via ${c.method === 'venmo' ? 'Venmo' : 'Zelle'}
-          ${c.message ? `<small>&ldquo;${esc(c.message)}&rdquo;</small>` : ''}</div>
+        <div class="who"><b>${esc(c.anonymous ? 'Anonymous' : c.contributor_name)}</b> &middot; ${money(c.amount)} via ${c.method === 'venmo' ? 'Venmo' : 'Zelle'}
+          ${!c.anonymous && c.message ? `<small>&ldquo;${esc(c.message)}&rdquo;</small>` : ''}</div>
         <span class="pill ${c.confirmed ? 'pill-ok' : 'pill-pend'}">${c.confirmed ? 'Confirmed' : 'Pending'}</span>
         ${c.confirmed ? '' : `<button class="iconbtn" title="Mark confirmed" data-confirm-contrib="${c.id}">${ICONS.check}</button>`}
         <button class="iconbtn" title="Remove" data-del-contrib="${c.id}">${ICONS.trash}</button>
