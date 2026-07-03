@@ -261,13 +261,15 @@ function cardHTML(item, idx) {
 }
 
 /* ---------- modal plumbing ---------- */
-function openModal(html) {
+function openModal(html, { wide = false } = {}) {
   $('#modal').innerHTML = `<button class="modal-close" data-close>${ICONS.x}</button>` + html;
+  $('#modal').classList.toggle('modal-wide', wide);
   $('#overlay').hidden = false;
 }
 function closeModal() {
   $('#overlay').hidden = true;
   $('#modal').innerHTML = '';
+  $('#modal').classList.remove('modal-wide');
 }
 
 /* ---------- contribute flow ---------- */
@@ -925,6 +927,92 @@ function openContribsList(item) {
     }));
 }
 
+function isCatalogItemAdded(catalogItem) {
+  return state.items.some((i) => {
+    if (catalogItem.product_url && i.product_url === catalogItem.product_url) return true;
+    if ((i.note || '').includes(`catalog:${catalogItem.id}`)) return true;
+    return i.title.trim().toLowerCase() === catalogItem.title.trim().toLowerCase();
+  });
+}
+
+function catalogCategories() {
+  return [...new Set(BABY_CATALOG.map((i) => i.category))];
+}
+
+function renderCatalogGrid(filter = 'All') {
+  const items = filter === 'All' ? BABY_CATALOG : BABY_CATALOG.filter((i) => i.category === filter);
+  const added = items.filter((i) => isCatalogItemAdded(i)).length;
+  $('#catalogMeta').textContent = `${added} of ${items.length} on your list`;
+  $('#catalogGrid').innerHTML = items.map((item) => {
+    const onList = isCatalogItemAdded(item);
+    return `<article class="catalog-card ${onList ? 'catalog-added' : ''}">
+      <div class="catalog-card-media">
+        ${item.image_url ? `<img src="${esc(item.image_url)}" alt="${esc(item.title)}" loading="lazy" onerror="this.style.display='none'">` : `<div class="catalog-card-ph">${ICONS.gift}</div>`}
+        <span class="catalog-cat">${esc(item.category)}</span>
+      </div>
+      <div class="catalog-card-body">
+        <h4>${esc(item.title)}</h4>
+        <div class="catalog-card-meta"><span>${money(item.price)}</span><span>${esc(item.retailer)}</span></div>
+        <button type="button" class="btn btn-small ${onList ? 'btn-ghost' : ''} btn-block catalog-add" data-catalog-id="${esc(item.id)}" ${onList ? 'disabled' : ''}>
+          ${onList ? `${ICONS.check} On your list` : 'Add to registry'}
+        </button>
+      </div>
+    </article>`;
+  }).join('');
+}
+
+function openCatalogPicker() {
+  let filter = 'All';
+  openModal(`
+    <h2>Top 50 registry ideas</h2>
+    <p class="sub">Popular baby picks — add what you want and skip the rest. You can edit price or details anytime.</p>
+    <div class="catalog-filters" id="catalogFilters"></div>
+    <p class="catalog-meta" id="catalogMeta"></p>
+    <div class="catalog-grid" id="catalogGrid"></div>`, { wide: true });
+
+  const filters = $('#catalogFilters');
+  filters.innerHTML = ['All', ...catalogCategories()].map((cat) =>
+    `<button type="button" class="catalog-filter ${cat === filter ? 'on' : ''}" data-cat="${esc(cat)}">${esc(cat)}</button>`,
+  ).join('');
+  renderCatalogGrid(filter);
+
+  filters.addEventListener('click', (e) => {
+    const btn = e.target.closest('.catalog-filter');
+    if (!btn) return;
+    filter = btn.dataset.cat;
+    filters.querySelectorAll('.catalog-filter').forEach((b) => b.classList.toggle('on', b === btn));
+    renderCatalogGrid(filter);
+  });
+
+  $('#catalogGrid').addEventListener('click', async (e) => {
+    const btn = e.target.closest('.catalog-add');
+    if (!btn || btn.disabled) return;
+    const item = BABY_CATALOG.find((i) => i.id === btn.dataset.catalogId);
+    if (!item || isCatalogItemAdded(item)) return;
+    btn.disabled = true;
+    btn.textContent = 'Adding…';
+    const rec = {
+      title: item.title,
+      product_url: item.product_url,
+      image_url: item.image_url || '',
+      retailer: item.retailer,
+      category: item.category,
+      price: item.price,
+      note: item.note ? `${item.note} [catalog:${item.id}]` : `[catalog:${item.id}]`,
+    };
+    const { error } = await sb.from('registry_items').insert(rec);
+    if (error) {
+      toast('Could not add — try again');
+      btn.disabled = false;
+      btn.textContent = 'Add to registry';
+      return;
+    }
+    await refresh();
+    renderCatalogGrid(filter);
+    toast('Added to registry');
+  });
+}
+
 function openSettings() {
   const s = state.settings;
   openModal(`
@@ -996,6 +1084,7 @@ $('#btnAdmin').addEventListener('click', promptOlivia);
 $('#btnExitAdmin').addEventListener('click', exitOlivia);
 $('#btnExitGuest').addEventListener('click', exitOlivia);
 $('#btnAddItem').addEventListener('click', () => openItemForm(null));
+$('#btnBrowseCatalog').addEventListener('click', openCatalogPicker);
 $('#btnSettings').addEventListener('click', openSettings);
 document.getElementById('sortBar')?.addEventListener('click', (e) => {
   const btn = e.target.closest('.sort-btn');
