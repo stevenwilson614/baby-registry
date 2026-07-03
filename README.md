@@ -16,7 +16,9 @@ the payment went through so the progress bars update.
    they're asked again on their next visit ("Welcome back — did the payment go
    through?"). Answering "No" removes the pending contribution.
 
-**Parents** — click *For parents* in the footer and enter the PIN.
+**Guests** — open the main link, browse items, and chip in via Venmo or Zelle.
+
+**Olivia** — use [Olivia’s view](https://stevenwilson614.github.io/baby-registry/#olivia) (PIN `7230`) to add items, edit settings, and manage gifts.
 - **Add item**: paste any product link (Amazon, Target, ...) — title, price, photo, and store are
   auto-filled from the link (via a Supabase Edge Function); tweak anything before saving.
 - **Settings**: registry title, welcome message, Venmo username, Zelle

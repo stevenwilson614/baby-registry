@@ -16,13 +16,16 @@
 
   <header class="hero">
     <div class="hero-inner">
+      <div class="hero-photo-wrap" id="heroPhotoWrap" hidden>
+        <img class="hero-photo" id="heroPhoto" alt="">
+      </div>
       <svg class="hero-arc" viewBox="0 0 120 60" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
         <path d="M10 55 C10 20, 110 20, 110 55" stroke-dasharray="3 6"/>
         <path d="M52 30 l3 -8 3 8 M55 25 h6" opacity="0"/>
         <circle cx="60" cy="14" r="3"/>
         <path d="M28 38 l2.2 4.4 4.8.8 -3.5 3.4.8 4.8 -4.3-2.3 -4.3 2.3.8-4.8 -3.5-3.4 4.8-.8z" transform="scale(.55) translate(20 30)"/>
       </svg>
-      <p class="hero-eyebrow" id="heroEyebrow">A little one is on the way</p>
+      <p class="hero-eyebrow" id="heroEyebrow">Our little one is on the way</p>
       <h1 class="hero-title" id="heroTitle">Our Baby Registry</h1>
       <p class="hero-note" id="heroNote"></p>
       <div class="hero-stats" id="heroStats"></div>
@@ -34,10 +37,10 @@
 
   <main class="page">
     <div class="admin-bar" id="adminBar" hidden>
-      <span class="admin-bar-label">Parent mode</span>
+      <span class="admin-bar-label">Olivia’s view</span>
       <button class="btn btn-small" id="btnAddItem">Add item</button>
       <button class="btn btn-small btn-ghost" id="btnSettings">Settings</button>
-      <button class="btn btn-small btn-ghost" id="btnExitAdmin">Exit</button>
+      <button class="btn btn-small btn-ghost" id="btnExitAdmin">Back to guest view</button>
     </div>
     <section class="grid" id="grid">
       <div class="loading" id="loading">
@@ -49,7 +52,10 @@
 
   <footer class="footer">
     <span id="footerNames"></span>
-    <button class="linklike" id="btnAdmin">For parents</button>
+    <div class="footer-actions">
+      <button class="linklike" id="btnExitGuest" hidden>Guest view</button>
+      <button class="linklike linklike-subtle" id="btnAdmin">Olivia’s view</button>
+    </div>
   </footer>
 
   <div class="overlay" id="overlay" hidden>

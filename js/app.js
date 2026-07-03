@@ -4,7 +4,11 @@
 const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
 const PENDING_KEY = 'br_pending_contribution';
 const ADMIN_KEY = 'br_admin';
+const OLIVIA_PIN = '7230';
 const DEFAULT_VENMO_USERNAME = 'steven-wilson-614';
+const DEFAULT_ZELLE_HANDLE = 'stevenwilson614@gmail.com';
+const DEFAULT_WELCOME = 'Our little one is on the way! Help make the baby\'s life possible by chipping in toward the things we\'ll need — every bit helps.';
+const DEFAULT_SHIPPING = 'Shipping to Indonesia isn\'t practical, so we\'re buying everything for the baby in-country — cash gifts let us do exactly that.';
 
 const state = {
   settings: null,
@@ -46,9 +50,42 @@ function venmoUsername(settings) {
   return user || DEFAULT_VENMO_USERNAME;
 }
 
+function zelleHandle(settings) {
+  return (settings?.zelle_handle || '').trim() || DEFAULT_ZELLE_HANDLE;
+}
+
 function buildVenmoUrl(user, amount, note) {
   const clean = String(user).trim().replace(/^@/, '');
   return `https://venmo.com/${encodeURIComponent(clean)}?txn=pay&amount=${Number(amount).toFixed(2)}&note=${encodeURIComponent(note)}`;
+}
+
+function buildZelleUrls(handle, amount, note) {
+  const email = encodeURIComponent(handle);
+  const amt = Number(amount).toFixed(2);
+  const memo = encodeURIComponent(note);
+  return [
+    `zelle://pay?email=${email}&amount=${amt}&memo=${memo}`,
+    `zelle://send?email=${email}&amount=${amt}&memo=${memo}`,
+    `zelle://send?token=${email}&amount=${amt}`,
+    'zelle://',
+  ];
+}
+
+function openZelleApp(handle, amount, note) {
+  const urls = buildZelleUrls(handle, amount, note);
+  const summary = `Send ${money(amount)} via Zelle to ${handle}\nMemo: ${note}`;
+  navigator.clipboard?.writeText(summary).catch(() => {});
+
+  const link = document.createElement('a');
+  link.href = urls[0];
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  setTimeout(() => {
+    try { window.open(urls[0], '_blank', 'noopener'); } catch { /* no Zelle app */ }
+  }, 250);
 }
 
 function toast(msg) {
@@ -58,6 +95,10 @@ function toast(msg) {
   t.textContent = msg;
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 2600);
+}
+
+function publicContributorName(c) {
+  return c.anonymous ? 'Anonymous' : c.contributor_name;
 }
 
 /* ---------- data ---------- */
@@ -81,27 +122,50 @@ const remainingFor = (item) => Math.max(0, (cents(item.price) - cents(fundedFor(
 /* ---------- render ---------- */
 function render() {
   const s = state.settings;
+  const welcome = (s.welcome_message || '').trim() || DEFAULT_WELCOME;
+  const shipping = (s.shipping_note || '').trim() || DEFAULT_SHIPPING;
+
   $('#heroTitle').textContent = s.parent_names || 'Our Baby Registry';
-  $('#heroNote').textContent = s.welcome_message || '';
+  $('#heroNote').innerHTML = `<p class="hero-lead">${esc(welcome)}</p><p class="hero-shipping">${esc(shipping)}</p>`;
   $('#footerNames').textContent = 'With love, ' + (s.parent_names || 'us');
   document.title = s.parent_names || 'Our Baby Registry';
 
+  const heroPhoto = (s.hero_photo_url || '').trim();
+  const photoWrap = $('#heroPhotoWrap');
+  const photoEl = $('#heroPhoto');
+  if (heroPhoto) {
+    photoWrap.hidden = false;
+    photoEl.src = heroPhoto;
+    photoEl.alt = s.parent_names || 'Our baby';
+  } else {
+    photoWrap.hidden = true;
+    photoEl.removeAttribute('src');
+  }
+
   const totalPrice = state.items.reduce((t, i) => t + cents(i.price), 0) / 100;
   const totalRaised = state.items.reduce((t, i) => t + cents(fundedFor(i.id)), 0) / 100;
-  const givers = new Set(state.contributions.filter((c) => c.confirmed).map((c) => c.contributor_name.trim().toLowerCase())).size;
+  const givers = new Set(
+    state.contributions.filter((c) => c.confirmed).map((c) => (c.anonymous ? `anon:${c.id}` : c.contributor_name.trim().toLowerCase())),
+  ).size;
   $('#heroStats').innerHTML = state.items.length
     ? `<span class="stat">${ICONS.gift}<span><b>${state.items.length}</b> item${state.items.length === 1 ? '' : 's'}</span></span>
        <span class="stat">${ICONS.heart}<span><b>${money(totalRaised)}</b> of ${money(totalPrice)} chipped in</span></span>
-       <span class="stat">${ICONS.users}<span><b>${givers}</b> generous ${givers === 1 ? 'soul' : 'souls'}</span></span>`
+       ${givers ? `<span class="stat">${ICONS.users}<span><b>${givers}</b> generous ${givers === 1 ? 'soul' : 'souls'}</span></span>` : ''}`
     : '';
 
+  document.body.classList.toggle('mode-olivia', state.admin);
+  document.body.classList.toggle('mode-guest', !state.admin);
+  document.body.classList.toggle('has-hero-photo', !!heroPhoto);
+
   $('#adminBar').hidden = !state.admin;
-  $('#btnAdmin').textContent = state.admin ? 'Parent mode on' : 'For parents';
+  $('#btnAdmin').hidden = state.admin;
+  $('#btnExitGuest').hidden = !state.admin;
+  $('#heroEyebrow').textContent = state.admin ? 'Managing the registry' : 'Our little one is on the way';
 
   const grid = $('#grid');
   if (!state.items.length) {
     grid.innerHTML = `<div class="empty">${ICONS.gift}<h3>Nothing here yet</h3>
-      <p>${state.admin ? 'Use “Add item” above to add the things you’ve bought.' : 'The parents are still adding items — check back soon.'}</p></div>`;
+      <p>${state.admin ? 'Use “Add item” above to add the things you’ve bought.' : 'Check back soon — gifts are on the way.'}</p></div>`;
     return;
   }
   grid.innerHTML = state.items.map(cardHTML).join('');
@@ -121,7 +185,7 @@ function cardHTML(item, idx) {
 
   const badge = item.received
     ? `<span class="badge badge-received">${ICONS.check} Received</span>`
-    : full ? `<span class="badge badge-funded">${ICONS.check} Fully funded</span>` : '';
+    : full ? `<span class="badge badge-funded">${ICONS.check} Paid</span>` : '';
 
   const title = item.product_url
     ? `<a href="${esc(item.product_url)}" target="_blank" rel="noopener">${esc(item.title)}${ICONS.ext}</a>`
@@ -134,6 +198,17 @@ function cardHTML(item, idx) {
          <button class="btn" data-payfull="${item.id}">Pay for item</button>
        </div>`;
 
+  const supporters = confirmed.length
+    ? `<div class="supporters">
+         <div class="supporters-label">${ICONS.users} ${full ? 'Paid by' : 'Supported by'}</div>
+         <ul class="supporters-list">${confirmed.map((c) => `
+           <li><span class="supporter-name">${esc(publicContributorName(c))}</span>
+             <span class="supporter-amt">${money(c.amount)}</span>
+             ${c.message && !c.anonymous ? `<span class="supporter-note">&ldquo;${esc(c.message)}&rdquo;</span>` : ''}
+           </li>`).join('')}</ul>
+       </div>`
+    : '';
+
   const adminRow = state.admin
     ? `<div class="admin-actions">
          <button class="btn btn-small btn-ghost" data-edit="${item.id}">${ICONS.pencil} Edit title &amp; price</button>
@@ -144,7 +219,7 @@ function cardHTML(item, idx) {
        </div>`
     : '';
 
-  return `<article class="card" style="animation-delay:${Math.min(idx * 60, 400)}ms">
+  return `<article class="card ${full ? 'card-complete' : ''}" style="animation-delay:${Math.min(idx * 60, 400)}ms">
     <div class="card-media tint-${idx % 4}">${media}${item.retailer ? `<span class="chip">${esc(item.retailer)}</span>` : ''}${badge}</div>
     <div class="card-body">
       <h3 class="card-title">${title}</h3>
@@ -152,12 +227,11 @@ function cardHTML(item, idx) {
       <div class="progress-wrap">
         <div class="progress-row">
           <span><b>${money(funded)}</b> <span class="muted">of ${money(item.price)}</span></span>
-          <span class="muted">${full ? 'Complete' : money(remaining) + ' to go'}</span>
+          <span class="muted">${full ? 'Paid in full' : money(remaining) + ' to go'}</span>
         </div>
         <div class="progress"><i class="${full ? 'full' : ''}" style="width:${pct}%"></i></div>
-        ${confirmed.length ? `<div class="contribs-line">${ICONS.heart} ${esc(confirmed.slice(0, 3).map((c) => c.contributor_name).join(', '))}${confirmed.length > 3 ? ` +${confirmed.length - 3} more` : ''} chipped in</div>` : ''}
       </div>
-      ${actions}${adminRow}
+      ${supporters}${actions}${adminRow}
     </div>
   </article>`;
 }
@@ -177,7 +251,7 @@ function openContribute(item, payFull) {
   const remaining = remainingFor(item);
   const s = state.settings;
   const hasVenmo = !!venmoUsername(s);
-  const hasZelle = !!s.zelle_handle.trim();
+  const hasZelle = !!zelleHandle(s);
   if (!hasVenmo && !hasZelle) {
     openModal(`<h2>Almost ready</h2><p class="sub">The parents haven’t added their Venmo or Zelle details yet. Check back soon!</p>`);
     return;
@@ -188,8 +262,12 @@ function openContribute(item, payFull) {
     <h2>${payFull ? 'Pay for this item' : 'Chip in'}</h2>
     <p class="sub">${esc(item.title)} &middot; ${money(remaining)} still needed</p>
     <div class="field"><label>Your name</label>
-      <input id="cName" maxlength="60" placeholder="So the parents can thank you">
+      <input id="cName" maxlength="60" placeholder="So we can thank you">
     </div>
+    <label class="check-row">
+      <input type="checkbox" id="cAnonymous">
+      <span>Give anonymously <small>(your name won’t show on the registry)</small></span>
+    </label>
     <div class="field"><label>Amount</label>
       <div class="amount-chips">
         ${chips.map((v) => `<button type="button" class="amt-chip" data-amt="${v}">${money(v)}</button>`).join('')}
@@ -203,7 +281,7 @@ function openContribute(item, payFull) {
     <div class="field"><label>How would you like to send it?</label>
       <div class="method-row">
         <button type="button" class="method-btn ${hasVenmo ? '' : 'off'}" data-method="venmo" ${hasVenmo ? '' : 'disabled'}>${ICONS.phone} Venmo <small>opens the app</small></button>
-        <button type="button" class="method-btn" data-method="zelle" ${hasZelle ? '' : 'disabled'}>${ICONS.bank} Zelle <small>via your bank app</small></button>
+        <button type="button" class="method-btn" data-method="zelle" ${hasZelle ? '' : 'disabled'}>${ICONS.bank} Zelle <small>opens the app</small></button>
       </div>
     </div>
     <p class="form-error" id="cError"></p>
@@ -217,16 +295,25 @@ function openContribute(item, payFull) {
     name: $('#cName').value.trim(),
     amount: Math.round(parseFloat($('#cAmount').value || '0') * 100) / 100,
     message: $('#cMessage').value.trim(),
+    anonymous: $('#cAnonymous').checked,
   });
 
+  const syncAnonymous = () => {
+    const on = $('#cAnonymous').checked;
+    $('#cName').closest('.field').classList.toggle('field-soft', on);
+    $('#cName').placeholder = on ? 'Optional — only Olivia sees this' : 'So we can thank you';
+  };
+  $('#cAnonymous').addEventListener('change', syncAnonymous);
+  syncAnonymous();
+
   const validateForm = () => {
-    const { name, amount, message } = readForm();
+    const { name, amount, message, anonymous } = readForm();
     const err = $('#cError');
-    if (!name) { err.textContent = 'Please add your name.'; return null; }
+    if (!anonymous && !name) { err.textContent = 'Please add your name, or check “Give anonymously”.'; return null; }
     if (!(amount >= 1)) { err.textContent = 'Please enter an amount of at least $1.'; return null; }
     if (amount > remaining + 0.001) { err.textContent = `Only ${money(remaining)} is still needed for this one.`; return null; }
     err.textContent = '';
-    return { name, amount, message };
+    return { name: name || 'Anonymous', amount, message, anonymous };
   };
 
   const submitPayment = async (paymentMethod) => {
@@ -248,7 +335,7 @@ function openContribute(item, payFull) {
     b.addEventListener('click', () => {
       method = b.dataset.method;
       paint();
-      if (method === 'venmo') submitPayment('venmo');
+      submitPayment(method);
     }));
   document.querySelectorAll('.amt-chip').forEach((b) =>
     b.addEventListener('click', () => {
@@ -260,9 +347,9 @@ function openContribute(item, payFull) {
   $('#cGo').addEventListener('click', () => submitPayment(method));
 }
 
-async function startPayment(item, { name, amount, method, message }) {
+async function startPayment(item, { name, amount, method, message, anonymous }) {
   const { data, error } = await sb.from('registry_contributions')
-    .insert({ item_id: item.id, contributor_name: name, amount, method, message })
+    .insert({ item_id: item.id, contributor_name: name, amount, method, message, anonymous: !!anonymous })
     .select().single();
   if (error) throw error;
 
@@ -283,14 +370,20 @@ async function startPayment(item, { name, amount, method, message }) {
       <p class="sub">We opened Venmo in a new tab. If it didn’t open,
         <a href="${esc(url)}" target="_blank" rel="noopener">tap here to pay @${esc(user)}</a>.</p>`;
   } else {
+    const handle = zelleHandle(s);
+    const note = `Baby registry - ${item.title}`;
+    const zelleUrl = buildZelleUrls(handle, amount, note)[0];
+    openZelleApp(handle, amount, note);
     payArea = `
       <div class="pay-panel">
-        <div class="rowline"><span>Open your bank app and send with Zelle to:</span></div>
-        <div class="rowline"><b>${esc(s.zelle_handle)}</b><button class="copybtn" data-copy="${esc(s.zelle_handle)}">${ICONS.copy} Copy</button></div>
+        <div class="rowline"><span>Send to</span><b>${esc(handle)}</b><button class="copybtn" data-copy="${esc(handle)}">${ICONS.copy} Copy</button></div>
         ${s.zelle_name ? `<div class="rowline"><span>Recipient name</span><b>${esc(s.zelle_name)}</b></div>` : ''}
         <div class="rowline"><span>Amount</span><b>${money(amount)}</b></div>
+        <div class="rowline"><span>Memo</span><b>${esc(note)}</b></div>
       </div>
-      <p class="sub">Zelle payments are sent from your own banking app — send it, then come back here.</p>`;
+      <p class="sub">We tried to open Zelle with your payment details. If it didn’t open,
+        <a href="${esc(zelleUrl)}">tap here to open Zelle</a> or send ${money(amount)} to <b>${esc(handle)}</b> in your bank app.</p>
+      <p class="sub">Payment details were copied to your clipboard.</p>`;
   }
 
   openModal(`
@@ -414,29 +507,47 @@ async function fetchProductFromUrl(rawUrl) {
   }
 }
 
-function promptAdmin() {
-  if (state.admin) { exitAdmin(); return; }
+function wantsOliviaView() {
+  return location.hash === '#olivia' || new URLSearchParams(location.search).get('view') === 'olivia';
+}
+
+function setOliviaUrl(on) {
+  const base = location.pathname + location.search;
+  if (on) {
+    if (!wantsOliviaView()) history.replaceState(null, '', `${base}#olivia`);
+  } else if (wantsOliviaView()) {
+    history.replaceState(null, '', base);
+  }
+}
+
+function promptOlivia() {
+  if (state.admin) return;
   openModal(`
-    <h2>Parent mode</h2>
-    <p class="sub">Enter your PIN to manage the registry.</p>
+    <h2>Olivia’s view</h2>
+    <p class="sub">Enter your PIN to manage items, settings, and gifts.</p>
     <div class="field"><input id="pinInput" type="password" inputmode="numeric" placeholder="PIN" autofocus></div>
     <p class="form-error" id="pinError"></p>
     <button class="btn btn-block" id="pinGo">Unlock</button>`);
   const go = () => {
-    if ($('#pinInput').value === state.settings.admin_pin) {
+    if ($('#pinInput').value === OLIVIA_PIN) {
       state.admin = true;
       sessionStorage.setItem(ADMIN_KEY, '1');
-      closeModal(); render();
-      toast('Parent mode on');
+      setOliviaUrl(true);
+      closeModal();
+      render();
+      toast('Olivia’s view');
     } else $('#pinError').textContent = 'That PIN doesn’t match.';
   };
   $('#pinGo').addEventListener('click', go);
   $('#pinInput').addEventListener('keydown', (e) => e.key === 'Enter' && go());
 }
-function exitAdmin() {
+
+function exitOlivia() {
   state.admin = false;
   sessionStorage.removeItem(ADMIN_KEY);
+  setOliviaUrl(false);
   render();
+  toast('Guest view');
 }
 
 function openItemForm(item) {
@@ -770,7 +881,7 @@ function openContribsList(item) {
     <p class="sub">${esc(item.title)} &middot; ${money(fundedFor(item.id))} of ${money(item.price)} confirmed</p>
     ${list.length ? `<ul class="contrib-list">${list.map((c) => `
       <li>
-        <div class="who"><b>${esc(c.contributor_name)}</b> &middot; ${money(c.amount)} via ${c.method === 'venmo' ? 'Venmo' : 'Zelle'}
+        <div class="who"><b>${esc(c.contributor_name)}</b>${c.anonymous ? ' <span class="pill pill-anon">Anonymous publicly</span>' : ''} &middot; ${money(c.amount)} via ${c.method === 'venmo' ? 'Venmo' : 'Zelle'}
           ${c.message ? `<small>&ldquo;${esc(c.message)}&rdquo;</small>` : ''}</div>
         <span class="pill ${c.confirmed ? 'pill-ok' : 'pill-pend'}">${c.confirmed ? 'Confirmed' : 'Pending'}</span>
         ${c.confirmed ? '' : `<button class="iconbtn" title="Mark confirmed" data-confirm-contrib="${c.id}">${ICONS.check}</button>`}
@@ -795,26 +906,32 @@ function openSettings() {
   openModal(`
     <h2>Registry settings</h2>
     <p class="sub">Payment details are shown to guests when they contribute.</p>
-    <div class="field"><label>Registry title</label><input id="sNames" maxlength="80" value="${esc(s.parent_names)}" placeholder="Baby Wilson’s Registry"></div>
-    <div class="field"><label>Welcome message</label><textarea id="sWelcome" rows="3" maxlength="400">${esc(s.welcome_message)}</textarea></div>
+    <div class="field"><label>Registry title</label><input id="sNames" maxlength="80" value="${esc(s.parent_names)}" placeholder="Our Baby Registry"></div>
+    <div class="field"><label>Top photo URL</label>
+      <input id="sHeroPhoto" maxlength="500" value="${esc(s.hero_photo_url)}" placeholder="https://... link to a photo">
+      <div class="hint">Paste a link to a photo — it appears at the top of the registry.</div></div>
+    ${s.hero_photo_url ? `<div class="settings-preview"><img src="${esc(s.hero_photo_url)}" alt="Hero preview" onerror="this.parentElement.hidden=true"></div>` : ''}
+    <div class="field"><label>Welcome message</label><textarea id="sWelcome" rows="3" maxlength="400">${esc(s.welcome_message || DEFAULT_WELCOME)}</textarea></div>
+    <div class="field"><label>Why cash? (shipping note)</label><textarea id="sShipping" rows="2" maxlength="300">${esc(s.shipping_note || DEFAULT_SHIPPING)}</textarea>
+      <div class="hint">Shown under the welcome message — explains the Indonesia / in-country buying story.</div></div>
     <div class="field"><label>Venmo username</label><input id="sVenmo" maxlength="60" value="${esc(s.venmo_username)}" placeholder="@your-venmo">
       <div class="hint">Guests are deep-linked straight into Venmo with the amount pre-filled.</div></div>
     <div class="field-row">
-      <div class="field"><label>Zelle email or phone</label><input id="sZelle" maxlength="80" value="${esc(s.zelle_handle)}" placeholder="you@email.com"></div>
+      <div class="field"><label>Zelle email or phone</label><input id="sZelle" maxlength="80" value="${esc(s.zelle_handle || DEFAULT_ZELLE_HANDLE)}" placeholder="stevenwilson614@gmail.com"></div>
       <div class="field"><label>Zelle recipient name</label><input id="sZelleName" maxlength="80" value="${esc(s.zelle_name)}" placeholder="Steven Wilson"></div>
     </div>
-    <div class="field"><label>Parent PIN</label><input id="sPin" maxlength="20" value="${esc(s.admin_pin)}"></div>
     <p class="form-error" id="sError"></p>
     <button class="btn btn-block" id="sSave">Save settings</button>`);
 
   $('#sSave').addEventListener('click', async () => {
     const rec = {
       parent_names: $('#sNames').value.trim() || 'Our Baby Registry',
+      hero_photo_url: $('#sHeroPhoto').value.trim(),
       welcome_message: $('#sWelcome').value.trim(),
+      shipping_note: $('#sShipping').value.trim(),
       venmo_username: $('#sVenmo').value.trim(),
       zelle_handle: $('#sZelle').value.trim(),
       zelle_name: $('#sZelleName').value.trim(),
-      admin_pin: $('#sPin').value.trim() || s.admin_pin,
       updated_at: new Date().toISOString(),
     };
     $('#sSave').disabled = true;
@@ -851,8 +968,9 @@ document.addEventListener('click', (e) => {
   } else if (t.dataset.delete) openDeleteConfirm(item(t.dataset.delete));
 });
 
-$('#btnAdmin').addEventListener('click', promptAdmin);
-$('#btnExitAdmin').addEventListener('click', exitAdmin);
+$('#btnAdmin').addEventListener('click', promptOlivia);
+$('#btnExitAdmin').addEventListener('click', exitOlivia);
+$('#btnExitGuest').addEventListener('click', exitOlivia);
 $('#btnAddItem').addEventListener('click', () => openItemForm(null));
 $('#btnSettings').addEventListener('click', openSettings);
 document.addEventListener('keydown', (e) => e.key === 'Escape' && closeModal());
@@ -861,6 +979,8 @@ document.addEventListener('keydown', (e) => e.key === 'Escape' && closeModal());
   try {
     await loadAll();
     render();
+    if (wantsOliviaView() && !state.admin) promptOlivia();
+    else if (state.admin) setOliviaUrl(true);
     await checkPending();
   } catch (e) {
     console.error(e);
