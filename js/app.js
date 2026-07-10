@@ -168,17 +168,12 @@ function render() {
   $('#footerNames').textContent = 'With love, ' + (s.parent_names || 'us');
   document.title = s.parent_names || 'Our Baby Registry';
 
-  const heroPhoto = (s.hero_photo_url || '').trim();
+  const heroPhoto = (s.hero_photo_url || '').trim() || 'images/hero.png';
   const photoWrap = $('#heroPhotoWrap');
   const photoEl = $('#heroPhoto');
-  if (heroPhoto) {
-    photoWrap.hidden = false;
-    photoEl.src = heroPhoto;
-    photoEl.alt = s.parent_names || 'Our baby';
-  } else {
-    photoWrap.hidden = true;
-    photoEl.removeAttribute('src');
-  }
+  photoWrap.hidden = false;
+  photoEl.src = heroPhoto;
+  photoEl.alt = s.parent_names || 'Olivia and Steven';
 
   const totalPrice = state.items.reduce((t, i) => t + cents(i.price), 0) / 100;
   const totalRaised = state.items.reduce((t, i) => t + cents(fundedFor(i.id)), 0) / 100;
